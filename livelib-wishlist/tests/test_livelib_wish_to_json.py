@@ -5,7 +5,10 @@ from tempfile import TemporaryDirectory
 
 from scripts.livelib_wish_to_json import (
     LiveLibAccessError,
+    WishlistUrl,
+    extract_wishlist_page_urls,
     fetch_html,
+    fetch_wishlist_pages,
     load_html_file,
     parse_livelib_wishlist_url,
 )
@@ -116,6 +119,93 @@ class FetchHtmlTest(unittest.TestCase):
             fetch_html(
                 "https://www.livelib.ru/reader/LiraLantan/wish",
                 opener=opener,
+            )
+
+
+class PaginationTest(unittest.TestCase):
+    def test_extracts_only_same_wishlist_page_urls(self):
+        html = """
+        <a href="/reader/LiraLantan/wish?page=2">2</a>
+        <a href="https://www.livelib.ru/reader/LiraLantan/wish?page=3">3</a>
+        <a href="/reader/LiraLantan/read?page=2">read</a>
+        <a href="/reader/OtherUser/wish?page=2">other</a>
+        <a href="/book/100000">book</a>
+        <a href="/reader/LiraLantan/wish?page=2">duplicate</a>
+        """
+
+        urls = extract_wishlist_page_urls(
+            html,
+            username="LiraLantan",
+            base_url="https://www.livelib.ru/reader/LiraLantan/wish",
+        )
+
+        self.assertEqual(
+            urls,
+            [
+                "https://www.livelib.ru/reader/LiraLantan/wish?page=2",
+                "https://www.livelib.ru/reader/LiraLantan/wish?page=3",
+            ],
+        )
+
+    def test_fetches_paginated_wishlist_pages(self):
+        pages = {
+            "https://www.livelib.ru/reader/LiraLantan/wish": """
+                <html><a href="/reader/LiraLantan/wish?page=2">2</a></html>
+            """,
+            "https://www.livelib.ru/reader/LiraLantan/wish?page=2": """
+                <html><a href="/reader/LiraLantan/wish?page=2">2</a></html>
+            """,
+        }
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            return FakeResponse(
+                body=pages[request.full_url].encode("utf-8"),
+                url=request.full_url,
+            )
+
+        result = fetch_wishlist_pages(
+            WishlistUrl(username="LiraLantan", url="https://www.livelib.ru/reader/LiraLantan/wish"),
+            opener=opener,
+        )
+
+        self.assertEqual(calls, list(pages.keys()))
+        self.assertEqual([page.url for page in result], list(pages.keys()))
+
+    def test_fetch_respects_max_pages(self):
+        pages = {
+            "https://www.livelib.ru/reader/LiraLantan/wish": """
+                <html><a href="/reader/LiraLantan/wish?page=2">2</a></html>
+            """,
+            "https://www.livelib.ru/reader/LiraLantan/wish?page=2": """
+                <html><a href="/reader/LiraLantan/wish?page=3">3</a></html>
+            """,
+        }
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            return FakeResponse(
+                body=pages[request.full_url].encode("utf-8"),
+                url=request.full_url,
+            )
+
+        result = fetch_wishlist_pages(
+            WishlistUrl(username="LiraLantan", url="https://www.livelib.ru/reader/LiraLantan/wish"),
+            max_pages=1,
+            opener=opener,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(calls, ["https://www.livelib.ru/reader/LiraLantan/wish"])
+
+    def test_rejects_zero_max_pages(self):
+        with self.assertRaises(ValueError):
+            fetch_wishlist_pages(
+                WishlistUrl(username="LiraLantan", url="https://www.livelib.ru/reader/LiraLantan/wish"),
+                max_pages=0,
+                opener=lambda request, timeout: FakeResponse(),
             )
 
 
