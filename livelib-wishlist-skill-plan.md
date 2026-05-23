@@ -42,13 +42,13 @@ Skill открывает LiveLib в браузерном режиме с руч�
 livelib-wishlist/
 ├── SKILL.md
 ├── scripts/
-│   └── livelib_wish_to_json.py
+│   └── livelib-wish-to-json.mjs
 ├── .browser-profile/      # локальный профиль браузера, не коммитить
 └── tests/
     ├── fixtures/
     │   ├── wish_page_1.html
     │   └── wish_page_2.html
-    └── test_livelib_wish_to_json.py
+    └── livelib-wish-to-json.test.mjs
 ```
 
 ## SKILL.md
@@ -63,7 +63,7 @@ livelib-wishlist/
 Пример workflow для агента:
 
 1. Проверить, что ссылка похожа на `/reader/<username>/wish`.
-2. Запустить скрипт `scripts/livelib_wish_to_json.py` в режиме `--browser`.
+2. Запустить скрипт `scripts/livelib-wish-to-json.mjs` в режиме `--browser`.
 3. Если LiveLib просит логин или проверку, дать пользователю пройти это вручную в открытом окне браузера.
 4. После успешного открытия wish-list обработать первую страницу и все страницы пагинации текущего wish-list.
 5. Сохранить JSON в указанное место или в файл по умолчанию.
@@ -74,7 +74,7 @@ livelib-wishlist/
 Интерфейс:
 
 ```bash
-python scripts/livelib_wish_to_json.py \
+node scripts/livelib-wish-to-json.mjs \
   "https://www.livelib.ru/reader/LiraLantan/wish" \
   --browser \
   --out wishlist.json \
@@ -84,13 +84,13 @@ python scripts/livelib_wish_to_json.py \
 Рекомендуемые зависимости:
 
 - `playwright` для браузерного режима;
-- `beautifulsoup4` для парсинга HTML.
+- `cheerio` для парсинга HTML.
 
 Установка браузерной зависимости:
 
 ```bash
-python -m pip install playwright
-python -m playwright install chromium
+npm install
+npx playwright install chromium
 ```
 
 Прямой HTTP-загрузчик и режим `--html` можно оставить как fallback, но основной

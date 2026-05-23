@@ -14,7 +14,7 @@ https://www.livelib.ru/reader/<username>/wish
 ## Workflow
 
 1. Validate that the URL points to `www.livelib.ru/reader/<username>/wish`.
-2. Run `scripts/livelib_wish_to_json.py` with `--browser`, a persistent profile directory, and a sensible `--max-pages` limit.
+2. Run `scripts/livelib-wish-to-json.mjs` with `--browser`, a persistent profile directory, and a sensible `--max-pages` limit.
 3. Open LiveLib in a visible browser window.
 4. If LiveLib asks for login or verification, let the user complete it manually.
 5. Process the first page and all pagination pages for the same user's wish-list.
