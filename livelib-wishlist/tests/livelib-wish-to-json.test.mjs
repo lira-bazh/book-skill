@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   extractWishlistPageUrls,
+  fetchWishlistPagesWithBrowser,
   loadHtmlFile,
   normalizeWishlistPageUrl,
   parseLivelibWishlistUrl,
@@ -88,4 +89,62 @@ test('loads saved HTML file', async () => {
 
   assert.equal(result.url, htmlPath);
   assert.equal(result.html, '<html>saved</html>');
+});
+
+test('browser mode opens wishlist page with persistent profile', async () => {
+  const calls = [];
+  let closed = false;
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url, options) {
+      currentUrl = url;
+      calls.push(['goto', url, options]);
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return '<html><body>wishlist</body></html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext(profileDir, options) {
+        calls.push(['launchPersistentContext', profileDir, options]);
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  const result = await fetchWishlistPagesWithBrowser({
+    wishlistUrl: {
+      username: 'LiraLantan',
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+    },
+    maxPages: 1,
+    profileDir: '.browser-profile-test',
+    playwright: fakePlaywright,
+  });
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].url, 'https://www.livelib.ru/reader/LiraLantan/wish');
+  assert.equal(result[0].html, '<html><body>wishlist</body></html>');
+  assert.equal(calls[0][0], 'launchPersistentContext');
+  assert.match(calls[0][1], /\.browser-profile-test$/);
+  assert.deepEqual(calls[0][2], { headless: false });
+  assert.deepEqual(calls[1], [
+    'goto',
+    'https://www.livelib.ru/reader/LiraLantan/wish',
+    { waitUntil: 'domcontentloaded' },
+  ]);
+  assert.equal(closed, true);
 });
