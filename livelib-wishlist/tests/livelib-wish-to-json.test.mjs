@@ -6,12 +6,15 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  buildYandexBooksSearchQuery,
+  buildYandexBooksSearchUrl,
   extractBooks,
   extractBooksFromPages,
   extractBookUrls,
   extractBookUrlsFromPages,
   extractWishlistPageUrls,
   fetchWishlistPagesWithBrowser,
+  fetchYandexBooksSearchPageWithBrowser,
   LiveLibAccessError,
   loadHtmlFile,
   main,
@@ -237,6 +240,97 @@ test('extracts work URLs used by LiveLib wishlist cards', () => {
       url: 'https://www.livelib.ru/work/1002365277-v-nochnom-sadu-ketrin-m-valente',
     },
   ]);
+});
+
+test('builds Yandex Books search query from title and authors', () => {
+  assert.equal(
+    buildYandexBooksSearchQuery({
+      title: '  Сто   лет   одиночества ',
+      authors: [' Габриэль Гарсиа Маркес ', 'Габриэль Гарсиа Маркес'],
+    }),
+    'Сто лет одиночества Габриэль Гарсиа Маркес',
+  );
+});
+
+test('builds Yandex Books search query without authors', () => {
+  assert.equal(
+    buildYandexBooksSearchQuery({
+      title: 'В ночном саду',
+      authors: [],
+    }),
+    'В ночном саду',
+  );
+});
+
+test('builds Yandex Books search URL', () => {
+  const searchUrl = new URL(buildYandexBooksSearchUrl(' Сто лет одиночества  Маркес '));
+
+  assert.equal(searchUrl.origin, 'https://books.yandex.ru');
+  assert.equal(
+    decodeURIComponent(searchUrl.pathname),
+    '/search/all/Сто лет одиночества Маркес',
+  );
+  assert.equal(searchUrl.search, '');
+});
+
+test('rejects empty Yandex Books search query', () => {
+  assert.throws(() => buildYandexBooksSearchUrl('   '));
+});
+
+test('browser mode opens Yandex Books search page with persistent profile', async () => {
+  const calls = [];
+  let closed = false;
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url, options) {
+      currentUrl = url;
+      calls.push(['goto', url, options]);
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return '<html><body>yandex search</body></html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext(profileDir, options) {
+        calls.push(['launchPersistentContext', profileDir, options]);
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  const result = await fetchYandexBooksSearchPageWithBrowser({
+    query: 'Сто лет одиночества Маркес',
+    profileDir: '.browser-profile-test',
+    playwright: fakePlaywright,
+  });
+  const openedUrl = new URL(result.url);
+
+  assert.equal(result.query, 'Сто лет одиночества Маркес');
+  assert.equal(result.html, '<html><body>yandex search</body></html>');
+  assert.equal(calls[0][0], 'launchPersistentContext');
+  assert.match(calls[0][1], /\.browser-profile-test$/);
+  assert.deepEqual(calls[0][2], { headless: false });
+  assert.deepEqual(calls[1][2], { waitUntil: 'domcontentloaded' });
+  assert.equal(openedUrl.origin, 'https://books.yandex.ru');
+  assert.equal(
+    decodeURIComponent(openedUrl.pathname),
+    '/search/all/Сто лет одиночества Маркес',
+  );
+  assert.equal(openedUrl.search, '');
+  assert.equal(closed, true);
 });
 
 test('extracts unique books across fetched pages', () => {

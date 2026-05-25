@@ -198,7 +198,51 @@ export function extractBookUrls(html, baseUrl) {
 }
 
 function cleanText(value) {
-  return value.replace(/\s+/g, ' ').trim();
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+export function buildYandexBooksSearchQuery(book) {
+  const title = cleanText(book?.title);
+  const authors = Array.isArray(book?.authors) ? book.authors : [];
+  const uniqueAuthors = authors
+    .map((author) => cleanText(author))
+    .filter(Boolean)
+    .filter((author, index, values) => values.indexOf(author) === index);
+
+  return [title, ...uniqueAuthors].filter(Boolean).join(' ');
+}
+
+export function buildYandexBooksSearchUrl(query) {
+  const normalizedQuery = cleanText(query);
+  if (!normalizedQuery) {
+    throw new Error('Yandex Books search query must not be empty');
+  }
+
+  return `https://books.yandex.ru/search/all/${encodeURIComponent(normalizedQuery)}`;
+}
+
+export async function fetchYandexBooksSearchPageWithBrowser({
+  query,
+  profileDir = DEFAULT_PROFILE_DIR,
+  playwright,
+}) {
+  const searchUrl = buildYandexBooksSearchUrl(query);
+  const playwrightApi = playwright ?? await import('playwright');
+  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
+    headless: false,
+  });
+
+  try {
+    const page = context.pages()[0] ?? await context.newPage();
+    await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+    return {
+      query: cleanText(query),
+      url: page.url(),
+      html: await page.content(),
+    };
+  } finally {
+    await context.close();
+  }
 }
 
 export function extractBooks(html, baseUrl) {
