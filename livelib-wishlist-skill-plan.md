@@ -75,10 +75,11 @@ livelib-wishlist/
 │       └── yandex-books.mjs
 ├── .browser-profile/      # локальный профиль браузера, не коммитить
 └── tests/
-    ├── fixtures/
-    │   ├── wish_page_1.html
-    │   └── wish_page_2.html
-    └── livelib-wish-to-json.test.mjs
+    ├── browser.test.mjs
+    ├── cli.test.mjs
+    ├── json-output.test.mjs
+    ├── livelib.test.mjs
+    └── yandex-books.test.mjs
 ```
 
 ## SKILL.md
