@@ -50,11 +50,56 @@ export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
   }
 
   const expectedPath = `/reader/${username}/wish`;
-  if (parsed.pathname.replace(/\/$/, '') !== expectedPath) {
+  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const listViewPrefix = `${expectedPath}/listview/smalllist/~`;
+
+  if (normalizedPath.startsWith(listViewPrefix)) {
+    const pageValue = normalizedPath.slice(listViewPrefix.length);
+    const pageNumber = Number.parseInt(pageValue, 10);
+
+    if (String(pageNumber) !== pageValue || pageNumber < 2 || parsed.search) {
+      return null;
+    }
+
+    return `https://www.livelib.ru${listViewPrefix}${pageNumber}`;
+  }
+
+  if (normalizedPath !== expectedPath) {
     return null;
   }
 
-  return `https://www.livelib.ru${expectedPath}${parsed.search}`;
+  const pageValues = parsed.searchParams.getAll('page');
+  const allowedParams = new Set(['page']);
+  const hasOnlyPaginationParams = [...parsed.searchParams.keys()]
+    .every((name) => allowedParams.has(name));
+
+  if (pageValues.length !== 1 || !hasOnlyPaginationParams) {
+    return null;
+  }
+
+  const pageNumber = Number.parseInt(pageValues[0], 10);
+  if (String(pageNumber) !== pageValues[0] || pageNumber < 2) {
+    return null;
+  }
+
+  return `https://www.livelib.ru${expectedPath}?page=${pageNumber}`;
+}
+
+function getWishlistPaginationPageNumber(rawUrl, username) {
+  const parsed = new URL(rawUrl);
+  const expectedPath = `/reader/${username}/wish`;
+  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const listViewPrefix = `${expectedPath}/listview/smalllist/~`;
+
+  if (normalizedPath.startsWith(listViewPrefix)) {
+    return Number.parseInt(normalizedPath.slice(listViewPrefix.length), 10);
+  }
+
+  if (normalizedPath === expectedPath) {
+    return Number.parseInt(parsed.searchParams.get('page'), 10);
+  }
+
+  return null;
 }
 
 export function extractHrefValues(html) {
@@ -71,12 +116,17 @@ export function extractHrefValues(html) {
 
 export function extractWishlistPageUrls(html, username, baseUrl) {
   const urls = [];
-  const seen = new Set();
+  const seenPageNumbers = new Set();
 
   for (const href of extractHrefValues(html)) {
     const normalizedUrl = normalizeWishlistPageUrl(href, username, baseUrl);
-    if (normalizedUrl && !seen.has(normalizedUrl)) {
-      seen.add(normalizedUrl);
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    const pageNumber = getWishlistPaginationPageNumber(normalizedUrl, username);
+    if (!seenPageNumbers.has(pageNumber)) {
+      seenPageNumbers.add(pageNumber);
       urls.push(normalizedUrl);
     }
   }
@@ -112,6 +162,7 @@ export async function fetchWishlistPagesWithBrowser({
     const page = context.pages()[0] ?? await context.newPage();
     const pending = [wishlistUrl.url];
     const queued = new Set(pending);
+    const queuedPageNumbers = new Set();
     const fetchedPages = [];
 
     while (pending.length > 0 && fetchedPages.length < maxPages) {
@@ -123,8 +174,10 @@ export async function fetchWishlistPagesWithBrowser({
       fetchedPages.push({ url: finalUrl, html });
 
       for (const pageUrl of extractWishlistPageUrls(html, wishlistUrl.username, finalUrl)) {
-        if (!queued.has(pageUrl)) {
+        const pageNumber = getWishlistPaginationPageNumber(pageUrl, wishlistUrl.username);
+        if (!queued.has(pageUrl) && !queuedPageNumbers.has(pageNumber)) {
           queued.add(pageUrl);
+          queuedPageNumbers.add(pageNumber);
           pending.push(pageUrl);
         }
       }

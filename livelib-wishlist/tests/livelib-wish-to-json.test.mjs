@@ -58,12 +58,45 @@ test('normalizes only same wishlist page URLs', () => {
     ),
     null,
   );
+
+  assert.equal(
+    normalizeWishlistPageUrl(
+      '/reader/LiraLantan/wish/listview/smalllist/~2',
+      'LiraLantan',
+      'https://www.livelib.ru/reader/LiraLantan/wish',
+    ),
+    'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~2',
+  );
 });
 
-test('extracts wishlist pagination links without duplicates', () => {
+test('rejects non-pagination wishlist URLs', () => {
+  const baseUrl = 'https://www.livelib.ru/reader/LiraLantan/wish';
+  const urls = [
+    '/reader/LiraLantan/wish',
+    '/reader/LiraLantan/wish?page=1',
+    '/reader/LiraLantan/wish?page=2&utm_source=footer',
+    '/reader/LiraLantan/wish?page=2&version=mobile',
+    '/reader/LiraLantan/wish?page=two',
+    '/reader/LiraLantan/wish?page=2.5',
+    '/reader/LiraLantan/wish/listview/smalllist/~1',
+    '/reader/LiraLantan/wish/listview/smalllist/~2?utm_source=footer',
+    '/reader/LiraLantan/wish/listview/smalllist/~two',
+  ];
+
+  for (const url of urls) {
+    assert.equal(normalizeWishlistPageUrl(url, 'LiraLantan', baseUrl), null);
+  }
+});
+
+test('extracts real wishlist pagination links without duplicates', () => {
   const html = `
     <a href="/reader/LiraLantan/wish?page=2">2</a>
     <a href="https://www.livelib.ru/reader/LiraLantan/wish?page=3">3</a>
+    <a href="/reader/LiraLantan/wish/listview/smalllist/~4">4</a>
+    <a href="/reader/LiraLantan/wish">wishlist footer</a>
+    <a href="/reader/LiraLantan/wish?page=1">1</a>
+    <a href="/reader/LiraLantan/wish?page=4&utm_source=footer">footer tracking</a>
+    <a href="/reader/LiraLantan/wish?page=5&version=mobile">mobile</a>
     <a href="/reader/LiraLantan/read?page=2">read</a>
     <a href="/reader/OtherUser/wish?page=2">other</a>
     <a href="/book/100000">book</a>
@@ -79,6 +112,7 @@ test('extracts wishlist pagination links without duplicates', () => {
   assert.deepEqual(urls, [
     'https://www.livelib.ru/reader/LiraLantan/wish?page=2',
     'https://www.livelib.ru/reader/LiraLantan/wish?page=3',
+    'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~4',
   ]);
 });
 
@@ -197,4 +231,75 @@ test('browser mode uses default persistent profile when no profile dir is provid
   });
 
   assert.equal(profilePath, resolveProfileDir());
+});
+
+test('browser mode opens every real wishlist pagination page once', async () => {
+  const visited = [];
+  let currentUrl = 'about:blank';
+  const pagesByUrl = new Map([
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish',
+      `
+        <a href="/reader/LiraLantan/wish?page=2">2</a>
+        <a href="/reader/LiraLantan/wish?page=2">duplicate 2</a>
+        <a href="/reader/LiraLantan/wish/listview/smalllist/~3">3</a>
+        <a href="/reader/LiraLantan/wish?page=3&utm_source=footer">tracking</a>
+        <a href="/reader/LiraLantan/read?page=2">read</a>
+      `,
+    ],
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish?page=2',
+      `
+        <a href="/reader/LiraLantan/wish?page=1">1</a>
+        <a href="/reader/LiraLantan/wish?page=2">duplicate current</a>
+        <a href="/reader/OtherUser/wish?page=3">other</a>
+      `,
+    ],
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~3',
+      '<a href="/reader/LiraLantan/wish/listview/smalllist/~2">2</a>',
+    ],
+  ]);
+
+  const fakePage = {
+    async goto(url) {
+      currentUrl = url;
+      visited.push(url);
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return pagesByUrl.get(currentUrl) ?? '';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {},
+        };
+      },
+    },
+  };
+
+  const result = await fetchWishlistPagesWithBrowser({
+    wishlistUrl: {
+      username: 'LiraLantan',
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+    },
+    maxPages: 50,
+    playwright: fakePlaywright,
+  });
+
+  assert.deepEqual(visited, [
+    'https://www.livelib.ru/reader/LiraLantan/wish',
+    'https://www.livelib.ru/reader/LiraLantan/wish?page=2',
+    'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~3',
+  ]);
+  assert.deepEqual(result.map((page) => page.url), visited);
 });
