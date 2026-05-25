@@ -196,20 +196,65 @@ export function extractMatchingYandexBooksUrls(
   ).map((result) => result.url);
 }
 
+function existingYandexBooksUrlsForBook(book, existingBooksByUrl) {
+  const existingBook = existingBooksByUrl.get(book?.url);
+  if (!Array.isArray(existingBook?.yandex_books_urls) || existingBook.yandex_books_urls.length === 0) {
+    return null;
+  }
+
+  return existingBook.yandex_books_urls;
+}
+
+export function countBooksWithExistingYandexBooksUrls(books, existingBooks = []) {
+  const existingBooksByUrl = new Map(
+    existingBooks
+      .filter((book) => book?.url)
+      .map((book) => [book.url, book]),
+  );
+
+  return books.filter((book) => (
+    existingYandexBooksUrlsForBook(book, existingBooksByUrl)
+  )).length;
+}
+
 export async function enrichBooksWithYandexBooksUrls(
   books,
   {
+    existingBooks = [],
     fetchSearchPage,
     profileDir,
     playwright,
     maxResults = Infinity,
+    delayMs = 0,
+    sleep = (ms) => new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    }),
   } = {},
 ) {
   const enrichedBooks = [];
+  const existingBooksByUrl = new Map(
+    existingBooks
+      .filter((book) => book?.url)
+      .map((book) => [book.url, book]),
+  );
   const searchPageFetcher = fetchSearchPage
     ?? (await import('./browser.mjs')).fetchYandexBooksSearchPageWithBrowser;
+  let searchedBooks = 0;
 
   for (const book of books) {
+    const existingYandexBooksUrls = existingYandexBooksUrlsForBook(book, existingBooksByUrl);
+    if (existingYandexBooksUrls) {
+      enrichedBooks.push({
+        ...book,
+        yandex_books_urls: [...existingYandexBooksUrls],
+      });
+      continue;
+    }
+
+    if (delayMs > 0 && searchedBooks > 0) {
+      await sleep(delayMs);
+    }
+
     const query = buildYandexBooksSearchQuery(book);
     const searchPage = await searchPageFetcher({
       query,
@@ -224,6 +269,7 @@ export async function enrichBooksWithYandexBooksUrls(
       ...book,
       yandex_books_urls: yandexBooksUrls,
     });
+    searchedBooks += 1;
   }
 
   return enrichedBooks;

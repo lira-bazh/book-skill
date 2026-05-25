@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildYandexBooksSearchQuery,
   buildYandexBooksSearchUrl,
+  countBooksWithExistingYandexBooksUrls,
   enrichBooksWithYandexBooksUrls,
   extractMatchingYandexBooksUrls,
   extractYandexBooksSearchResults,
@@ -310,6 +311,238 @@ test('enriches books with matching Yandex Books URLs', async () => {
     {
       ...books[1],
       yandex_books_urls: ['https://books.yandex.ru/books/Eyxip4ae'],
+    },
+  ]);
+});
+
+test('limits matching Yandex Books URLs per book', async () => {
+  const books = [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+  ];
+
+  const enriched = await enrichBooksWithYandexBooksUrls(books, {
+    maxResults: 1,
+    async fetchSearchPage() {
+      return {
+        url: 'https://books.yandex.ru/search/all/test',
+        html: `
+          <div data-test-id="SNIPPET">
+            <a href="/books/RuLNt8od">Сто лет одиночества</a>
+            <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Габриэль Гарсиа Маркес</a>
+          </div>
+          <div data-test-id="SNIPPET">
+            <a href="/audiobooks/RuLNt8od">Сто лет одиночества. Полная версия</a>
+            <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Габриэль Гарсиа Маркес</a>
+          </div>
+        `,
+      };
+    },
+  });
+
+  assert.deepEqual(enriched, [
+    {
+      ...books[0],
+      yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
+    },
+  ]);
+});
+
+test('preserves LiveLib fields while enriching Yandex Books URLs', async () => {
+  const books = [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+      livelib_note: 'keep this field untouched',
+      yandex_books_urls: ['https://books.yandex.ru/books/old'],
+    },
+  ];
+
+  const enriched = await enrichBooksWithYandexBooksUrls(books, {
+    async fetchSearchPage() {
+      return {
+        url: 'https://books.yandex.ru/search/all/test',
+        html: `
+          <div data-test-id="SNIPPET">
+            <a href="/books/RuLNt8od">Сто лет одиночества</a>
+            <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Габриэль Гарсиа Маркес</a>
+          </div>
+        `,
+      };
+    },
+  });
+
+  assert.deepEqual(enriched, [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+      livelib_note: 'keep this field untouched',
+      yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
+    },
+  ]);
+  assert.deepEqual(books[0], {
+    title: 'Сто лет одиночества',
+    authors: ['Габриэль Гарсиа Маркес'],
+    url: 'https://www.livelib.ru/book/100000',
+    livelib_note: 'keep this field untouched',
+    yandex_books_urls: ['https://books.yandex.ru/books/old'],
+  });
+});
+
+test('reuses existing Yandex Books URLs and skips search for already enriched books', async () => {
+  const calls = [];
+  const books = [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Полковнику никто не пишет',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
+  ];
+
+  const enriched = await enrichBooksWithYandexBooksUrls(books, {
+    existingBooks: [
+      {
+        title: 'Old title should not be reused',
+        authors: ['Old author'],
+        url: 'https://www.livelib.ru/book/100000',
+        yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+      },
+    ],
+    async fetchSearchPage({ query }) {
+      calls.push(query);
+      return {
+        url: 'https://books.yandex.ru/search/all/test',
+        html: `
+          <div data-test-id="SNIPPET">
+            <a href="/books/Eyxip4ae">Полковнику никто не пишет</a>
+            <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Габриэль Гарсиа Маркес</a>
+          </div>
+        `,
+      };
+    },
+  });
+
+  assert.deepEqual(calls, ['Полковнику никто не пишет Габриэль Гарсиа Маркес']);
+  assert.deepEqual(enriched, [
+    {
+      ...books[0],
+      yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+    },
+    {
+      ...books[1],
+      yandex_books_urls: ['https://books.yandex.ru/books/Eyxip4ae'],
+    },
+  ]);
+});
+
+test('counts books with existing Yandex Books URLs', () => {
+  const books = [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Полковнику никто не пишет',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
+    {
+      title: 'В ночном саду',
+      authors: ['Кэтрин М. Валенте'],
+      url: 'https://www.livelib.ru/work/300000',
+    },
+  ];
+  const existingBooks = [
+    {
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+    },
+    {
+      url: 'https://www.livelib.ru/book/200000',
+      yandex_books_urls: [],
+    },
+  ];
+
+  assert.equal(countBooksWithExistingYandexBooksUrls(books, existingBooks), 1);
+});
+
+test('waits between Yandex Books searches', async () => {
+  const calls = [];
+  const sleeps = [];
+  const books = [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Полковнику никто не пишет',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
+  ];
+
+  await enrichBooksWithYandexBooksUrls(books, {
+    delayMs: 1500,
+    async sleep(ms) {
+      sleeps.push(ms);
+      calls.push(['sleep', ms]);
+    },
+    async fetchSearchPage({ query }) {
+      calls.push(['fetch', query]);
+      return {
+        url: 'https://books.yandex.ru/search/all/test',
+        html: '',
+      };
+    },
+  });
+
+  assert.deepEqual(sleeps, [1500]);
+  assert.deepEqual(calls, [
+    ['fetch', 'Сто лет одиночества Габриэль Гарсиа Маркес'],
+    ['sleep', 1500],
+    ['fetch', 'Полковнику никто не пишет Габриэль Гарсиа Маркес'],
+  ]);
+});
+
+test('enriches missing Yandex Books matches with an empty URL array', async () => {
+  const books = [
+    {
+      title: 'Редкая книга без совпадений',
+      authors: ['Неизвестный автор'],
+      url: 'https://www.livelib.ru/book/300000',
+    },
+  ];
+
+  const enriched = await enrichBooksWithYandexBooksUrls(books, {
+    async fetchSearchPage() {
+      return {
+        url: 'https://books.yandex.ru/search/all/test',
+        html: `
+          <div data-test-id="SNIPPET">
+            <a href="/books/RuLNt8od">Сто лет одиночества</a>
+            <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Габриэль Гарсиа Маркес</a>
+          </div>
+        `,
+      };
+    },
+  });
+
+  assert.deepEqual(enriched, [
+    {
+      ...books[0],
+      yandex_books_urls: [],
     },
   ]);
 });
