@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { load } from 'cheerio';
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
+const BOOK_ITEM_PATH_RE = /^\/(?:book|work)\/[^/]+$/;
 const DEFAULT_MAX_PAGES = 50;
+const DEFAULT_PAGE_DELAY_MS = 1000;
 const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_PROFILE_DIR = resolve(SKILL_DIR, '.browser-profile');
 
@@ -135,6 +137,27 @@ export function extractWishlistPageUrls(html, username, baseUrl) {
   return urls;
 }
 
+function isWishlistContentUrl(rawUrl, username, baseUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl, baseUrl);
+  } catch {
+    return false;
+  }
+
+  const expectedPath = `/reader/${username}/wish`;
+  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  if (
+    parsed.hostname.toLowerCase() === 'www.livelib.ru' &&
+    normalizedPath === expectedPath &&
+    parsed.search === ''
+  ) {
+    return true;
+  }
+
+  return normalizeWishlistPageUrl(rawUrl, username, baseUrl) !== null;
+}
+
 export function normalizeBookUrl(rawUrl, baseUrl) {
   let parsed;
   try {
@@ -152,7 +175,7 @@ export function normalizeBookUrl(rawUrl, baseUrl) {
   }
 
   const normalizedPath = parsed.pathname.replace(/\/$/, '');
-  if (!/^\/book\/[^/]+$/.test(normalizedPath)) {
+  if (!BOOK_ITEM_PATH_RE.test(normalizedPath)) {
     return null;
   }
 
@@ -266,11 +289,18 @@ export function resolveProfileDir(profileDir = DEFAULT_PROFILE_DIR) {
   return resolve(profileDir);
 }
 
+function sleep(ms) {
+  return new Promise((resolveSleep) => {
+    setTimeout(resolveSleep, ms);
+  });
+}
+
 export async function fetchWishlistPagesWithBrowser({
   wishlistUrl,
   maxPages = DEFAULT_MAX_PAGES,
   profileDir = DEFAULT_PROFILE_DIR,
   playwright,
+  pageDelayMs = 0,
 }) {
   if (maxPages < 1) {
     throw new Error('maxPages must be greater than zero');
@@ -294,6 +324,10 @@ export async function fetchWishlistPagesWithBrowser({
 
       const html = await page.content();
       const finalUrl = page.url();
+      if (!isWishlistContentUrl(finalUrl, wishlistUrl.username, wishlistUrl.url)) {
+        throw new LiveLibAccessError(`LiveLib opened an unexpected page instead of the wish-list: ${finalUrl}`);
+      }
+
       fetchedPages.push({ url: finalUrl, html });
 
       for (const pageUrl of extractWishlistPageUrls(html, wishlistUrl.username, finalUrl)) {
@@ -303,6 +337,10 @@ export async function fetchWishlistPagesWithBrowser({
           queuedPageNumbers.add(pageNumber);
           pending.push(pageUrl);
         }
+      }
+
+      if (pending.length > 0 && pageDelayMs > 0) {
+        await sleep(pageDelayMs);
       }
     }
 
@@ -318,6 +356,7 @@ function parseArgs(argv) {
     html: null,
     browser: false,
     maxPages: DEFAULT_MAX_PAGES,
+    pageDelayMs: DEFAULT_PAGE_DELAY_MS,
     profileDir: DEFAULT_PROFILE_DIR,
   };
   const positional = [];
@@ -332,6 +371,8 @@ function parseArgs(argv) {
       args.html = argv[++i];
     } else if (arg === '--max-pages') {
       args.maxPages = Number.parseInt(argv[++i], 10);
+    } else if (arg === '--page-delay-ms') {
+      args.pageDelayMs = Number.parseInt(argv[++i], 10);
     } else if (arg === '--profile-dir') {
       args.profileDir = argv[++i];
     } else if (arg === '-h' || arg === '--help') {
@@ -356,6 +397,7 @@ Options:
   --html <path>            Fallback: load a saved HTML file.
   --out <path>             Output JSON path. Default: wishlist.json
   --max-pages <number>     Maximum pagination pages. Default: ${DEFAULT_MAX_PAGES}
+  --page-delay-ms <number> Delay between pagination requests. Default: ${DEFAULT_PAGE_DELAY_MS}
 `);
 }
 
@@ -384,6 +426,7 @@ export async function main(argv = process.argv.slice(2)) {
       fetchedPages = await fetchWishlistPagesWithBrowser({
         wishlistUrl,
         maxPages: args.maxPages,
+        pageDelayMs: args.pageDelayMs,
         profileDir: args.profileDir,
       });
     } else {

@@ -12,6 +12,7 @@ import {
   extractBookUrlsFromPages,
   extractWishlistPageUrls,
   fetchWishlistPagesWithBrowser,
+  LiveLibAccessError,
   loadHtmlFile,
   main,
   normalizeBookUrl,
@@ -123,7 +124,7 @@ test('extracts real wishlist pagination links without duplicates', () => {
   ]);
 });
 
-test('normalizes only LiveLib book URLs', () => {
+test('normalizes only LiveLib book and work URLs', () => {
   const baseUrl = 'https://www.livelib.ru/reader/LiraLantan/wish';
 
   assert.equal(
@@ -134,12 +135,17 @@ test('normalizes only LiveLib book URLs', () => {
     normalizeBookUrl('https://www.livelib.ru/book/100000?utm_source=list#reviews', baseUrl),
     'https://www.livelib.ru/book/100000',
   );
+  assert.equal(
+    normalizeBookUrl('/work/1002365277-v-nochnom-sadu-ketrin-m-valente', baseUrl),
+    'https://www.livelib.ru/work/1002365277-v-nochnom-sadu-ketrin-m-valente',
+  );
 
   const rejectedUrls = [
     '/reader/LiraLantan/wish',
     '/bookseries/100000',
     '/book/100000/readers',
     '/book/100000/reviews-title',
+    '/work/100000/readers',
     'https://example.com/book/100000',
     'mailto:test@example.com',
   ];
@@ -153,6 +159,7 @@ test('extracts unique book URLs from one page', () => {
   const html = `
     <a href="/book/100000">Book One</a>
     <a href="https://www.livelib.ru/book/200000">Book Two</a>
+    <a href="/work/300000">Work Three</a>
     <a href="/book/100000?utm_source=duplicate">Book One duplicate</a>
     <a href="/book/100000/readers">readers</a>
     <a href="/reader/LiraLantan/wish?page=2">pagination</a>
@@ -164,6 +171,7 @@ test('extracts unique book URLs from one page', () => {
     [
       'https://www.livelib.ru/book/100000',
       'https://www.livelib.ru/book/200000',
+      'https://www.livelib.ru/work/300000',
     ],
   );
 });
@@ -208,6 +216,25 @@ test('extracts book title, authors, and URL from a wishlist card', () => {
       title: 'The First Book',
       authors: ['Author One', 'Author Two'],
       url: 'https://www.livelib.ru/book/100000-title',
+    },
+  ]);
+});
+
+test('extracts work URLs used by LiveLib wishlist cards', () => {
+  const html = `
+    <div class="brow-book">
+      <a class="brow-book-name" href="/work/1002365277-v-nochnom-sadu-ketrin-m-valente">
+        В ночном саду
+      </a>
+      <a class="brow-book-author" href="/author/1">Кэтрин М. Валенте</a>
+    </div>
+  `;
+
+  assert.deepEqual(extractBooks(html, 'https://www.livelib.ru/reader/LiraLantan/wish'), [
+    {
+      title: 'В ночном саду',
+      authors: ['Кэтрин М. Валенте'],
+      url: 'https://www.livelib.ru/work/1002365277-v-nochnom-sadu-ketrin-m-valente',
     },
   ]);
 });
@@ -510,4 +537,44 @@ test('browser mode opens every real wishlist pagination page once', async () => 
     'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~3',
   ]);
   assert.deepEqual(result.map((page) => page.url), visited);
+});
+
+test('browser mode rejects unexpected LiveLib pages before returning partial data', async () => {
+  let closed = false;
+  const fakePage = {
+    async goto() {},
+    url() {
+      return 'https://www.livelib.ru/service/ratelimitcaptcha';
+    },
+    async content() {
+      return '<html>rate limit</html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => fetchWishlistPagesWithBrowser({
+      wishlistUrl: {
+        username: 'LiraLantan',
+        url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+      },
+      playwright: fakePlaywright,
+    }),
+    LiveLibAccessError,
+  );
+  assert.equal(closed, true);
 });
