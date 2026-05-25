@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { loadBooksJsonIfExists, loadHtmlFile, writeBooksJson } from '../scripts/lib/json-output.mjs';
+import {
+  booksJsonExists,
+  loadBooksJsonIfExists,
+  loadHtmlFile,
+  writeBooksJson,
+} from '../scripts/lib/json-output.mjs';
 
 test('loads saved HTML file', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
@@ -19,6 +24,21 @@ test('loads saved HTML file', async (t) => {
 
   assert.equal(result.url, htmlPath);
   assert.equal(result.html, '<html>saved</html>');
+});
+
+test('checks whether books JSON exists', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const outPath = join(directory, 'wishlist.json');
+
+  assert.equal(await booksJsonExists(outPath), false);
+
+  await writeFile(outPath, '[]\n', 'utf8');
+
+  assert.equal(await booksJsonExists(outPath), true);
 });
 
 test('writes extracted books to JSON file', async (t) => {
@@ -70,4 +90,19 @@ test('loads an empty books array when JSON does not exist', async (t) => {
   });
 
   assert.deepEqual(await loadBooksJsonIfExists(join(directory, 'missing.json')), []);
+});
+
+test('rejects existing books JSON with a non-array schema', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const outPath = join(directory, 'wishlist.json');
+  await writeFile(outPath, '{"books":[]}\n', 'utf8');
+
+  await assert.rejects(
+    () => loadBooksJsonIfExists(outPath),
+    /Existing JSON must contain an array/,
+  );
 });

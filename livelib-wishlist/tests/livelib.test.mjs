@@ -7,6 +7,8 @@ import {
   extractBookUrls,
   extractBookUrlsFromPages,
   extractWishlistPageUrls,
+  matchBooksByLiveLibUrl,
+  mergeExistingLiveLibBooks,
   normalizeBookUrl,
   normalizeWishlistPageUrl,
   parseLivelibWishlistUrl,
@@ -265,6 +267,172 @@ test('extracts unique books across fetched pages', () => {
       title: 'Book Two',
       authors: ['Author Two'],
       url: 'https://www.livelib.ru/book/200000',
+    },
+  ]);
+});
+
+test('matches LiveLib books with existing books by LiveLib URL', () => {
+  const livelibBooks = [
+    {
+      title: 'Book One from LiveLib',
+      authors: ['Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Book Two from LiveLib',
+      authors: ['Author Two'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
+  ];
+  const existingBooks = [
+    {
+      title: 'Book One from file',
+      authors: ['Old Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+    },
+    {
+      title: 'Removed Book',
+      authors: ['Removed Author'],
+      url: 'https://www.livelib.ru/book/300000',
+      yandex_books_urls: ['https://books.yandex.ru/books/removed'],
+    },
+  ];
+
+  assert.deepEqual(matchBooksByLiveLibUrl(livelibBooks, existingBooks), {
+    matched: [
+      {
+        livelibBook: livelibBooks[0],
+        existingBook: existingBooks[0],
+      },
+      {
+        livelibBook: livelibBooks[1],
+        existingBook: null,
+      },
+    ],
+    newBooks: [livelibBooks[1]],
+    removedBooks: [existingBooks[1]],
+  });
+});
+
+test('keeps existing file data for books still present on LiveLib', () => {
+  const livelibBooks = [
+    {
+      title: 'Book One from LiveLib',
+      authors: ['Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Book Two from LiveLib',
+      authors: ['Author Two'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
+  ];
+  const existingBooks = [
+    {
+      title: 'Book One from file',
+      authors: ['Old Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+      livelib_note: 'keep me',
+      yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+    },
+  ];
+
+  assert.deepEqual(mergeExistingLiveLibBooks(livelibBooks, existingBooks), [
+    existingBooks[0],
+    {
+      ...livelibBooks[1],
+      yandex_books_urls: [],
+    },
+  ]);
+});
+
+test('adds an empty Yandex Books URL array for new LiveLib books', () => {
+  const livelibBooks = [
+    {
+      title: 'New Book',
+      authors: ['New Author'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+  ];
+
+  assert.deepEqual(mergeExistingLiveLibBooks(livelibBooks, []), [
+    {
+      title: 'New Book',
+      authors: ['New Author'],
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: [],
+    },
+  ]);
+});
+
+test('removes books missing from the current LiveLib wishlist during merge', () => {
+  const livelibBooks = [
+    {
+      title: 'Current Book',
+      authors: ['Current Author'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+  ];
+  const existingBooks = [
+    {
+      title: 'Current Book from file',
+      authors: ['Old Current Author'],
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: ['https://books.yandex.ru/books/current'],
+    },
+    {
+      title: 'Removed Book',
+      authors: ['Removed Author'],
+      url: 'https://www.livelib.ru/book/200000',
+      yandex_books_urls: ['https://books.yandex.ru/books/removed'],
+    },
+  ];
+
+  assert.deepEqual(mergeExistingLiveLibBooks(livelibBooks, existingBooks), [
+    existingBooks[0],
+  ]);
+});
+
+test('keeps current LiveLib order while merging existing books', () => {
+  const livelibBooks = [
+    {
+      title: 'Book Two from LiveLib',
+      authors: ['Author Two'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
+    {
+      title: 'Book One from LiveLib',
+      authors: ['Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Book Three from LiveLib',
+      authors: ['Author Three'],
+      url: 'https://www.livelib.ru/book/300000',
+    },
+  ];
+  const existingBooks = [
+    {
+      title: 'Book One from file',
+      authors: ['Old Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: ['https://books.yandex.ru/books/one'],
+    },
+    {
+      title: 'Book Two from file',
+      authors: ['Old Author Two'],
+      url: 'https://www.livelib.ru/book/200000',
+      yandex_books_urls: ['https://books.yandex.ru/books/two'],
+    },
+  ];
+
+  assert.deepEqual(mergeExistingLiveLibBooks(livelibBooks, existingBooks), [
+    existingBooks[1],
+    existingBooks[0],
+    {
+      ...livelibBooks[2],
+      yandex_books_urls: [],
     },
   ]);
 });

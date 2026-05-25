@@ -249,3 +249,47 @@ export function extractBookUrlsFromPages(pages) {
 
   return urls;
 }
+
+export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
+  const existingBooksByUrl = new Map(
+    existingBooks
+      .filter((book) => book?.url)
+      .map((book) => [book.url, book]),
+  );
+  const livelibUrls = new Set();
+  const matched = [];
+  const newBooks = [];
+
+  for (const livelibBook of livelibBooks) {
+    livelibUrls.add(livelibBook.url);
+    const existingBook = existingBooksByUrl.get(livelibBook.url) ?? null;
+
+    matched.push({
+      livelibBook,
+      existingBook,
+    });
+
+    if (!existingBook) {
+      newBooks.push(livelibBook);
+    }
+  }
+
+  const removedBooks = existingBooks.filter((book) => (
+    book?.url && !livelibUrls.has(book.url)
+  ));
+
+  return {
+    matched,
+    newBooks,
+    removedBooks,
+  };
+}
+
+export function mergeExistingLiveLibBooks(livelibBooks, existingBooks = []) {
+  return matchBooksByLiveLibUrl(livelibBooks, existingBooks).matched.map((match) => (
+    match.existingBook ?? {
+      ...match.livelibBook,
+      yandex_books_urls: [],
+    }
+  ));
+}

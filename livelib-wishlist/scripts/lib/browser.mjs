@@ -11,7 +11,9 @@ import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
 import { cleanText } from './text-match.mjs';
 
 export const DEFAULT_MAX_PAGES = 50;
-export const DEFAULT_PAGE_DELAY_MS = 1000;
+export const DEFAULT_PAGE_DELAY_MS = 2000;
+export const DEFAULT_NAVIGATION_TIMEOUT_MS = 120000;
+export const DEFAULT_NAVIGATION_ATTEMPTS = 3;
 
 const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const DEFAULT_PROFILE_DIR = resolve(SKILL_DIR, '.browser-profile');
@@ -24,6 +26,36 @@ function sleep(ms) {
   return new Promise((resolveSleep) => {
     setTimeout(resolveSleep, ms);
   });
+}
+
+function isRetriableNavigationError(error) {
+  const message = error?.message ?? '';
+  return message.includes('net::ERR_NETWORK_CHANGED')
+    || message.includes('net::ERR_TIMED_OUT')
+    || message.includes('net::ERR_HTTP_RESPONSE_CODE_FAILURE')
+    || message.includes('Timeout');
+}
+
+async function gotoWithRetry(page, url, {
+  attempts = DEFAULT_NAVIGATION_ATTEMPTS,
+  retryDelayMs = DEFAULT_PAGE_DELAY_MS,
+} = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await page.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isRetriableNavigationError(error)) {
+        throw error;
+      }
+      await sleep(retryDelayMs);
+    }
+  }
+  throw lastError;
 }
 
 export async function fetchYandexBooksSearchPageWithBrowser({
@@ -39,7 +71,7 @@ export async function fetchYandexBooksSearchPageWithBrowser({
 
   try {
     const page = context.pages()[0] ?? await context.newPage();
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+    await gotoWithRetry(page, searchUrl);
     return {
       query: cleanText(query),
       url: page.url(),
@@ -75,7 +107,7 @@ export async function fetchWishlistPagesWithBrowser({
 
     while (pending.length > 0 && fetchedPages.length < maxPages) {
       const url = pending.shift();
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      await gotoWithRetry(page, url);
 
       const html = await page.content();
       const finalUrl = page.url();

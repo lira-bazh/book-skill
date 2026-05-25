@@ -494,7 +494,7 @@ test('waits between Yandex Books searches', async () => {
   ];
 
   await enrichBooksWithYandexBooksUrls(books, {
-    delayMs: 1500,
+    delayMs: 2000,
     async sleep(ms) {
       sleeps.push(ms);
       calls.push(['sleep', ms]);
@@ -508,10 +508,10 @@ test('waits between Yandex Books searches', async () => {
     },
   });
 
-  assert.deepEqual(sleeps, [1500]);
+  assert.deepEqual(sleeps, [2000]);
   assert.deepEqual(calls, [
     ['fetch', 'Сто лет одиночества Габриэль Гарсиа Маркес'],
-    ['sleep', 1500],
+    ['sleep', 2000],
     ['fetch', 'Полковнику никто не пишет Габриэль Гарсиа Маркес'],
   ]);
 });
@@ -543,6 +543,59 @@ test('enriches missing Yandex Books matches with an empty URL array', async () =
     {
       ...books[0],
       yandex_books_urls: [],
+    },
+  ]);
+});
+
+test('keeps enriching after a failed Yandex Books search', async () => {
+  const errors = [];
+  const books = [
+    {
+      title: 'Контакт',
+      authors: ['Карл Саган'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
+  ];
+
+  const enriched = await enrichBooksWithYandexBooksUrls(books, {
+    async fetchSearchPage({ query }) {
+      if (query === 'Контакт Карл Саган') {
+        throw new Error('page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE');
+      }
+
+      return {
+        url: 'https://books.yandex.ru/search/all/test',
+        html: `
+          <div data-test-id="SNIPPET">
+            <a href="/books/RuLNt8od">Сто лет одиночества</a>
+            <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Габриэль Гарсиа Маркес</a>
+          </div>
+        `,
+      };
+    },
+    onSearchError({ book, query, error }) {
+      errors.push([book.title, query, error.message]);
+    },
+  });
+
+  assert.deepEqual(errors, [[
+    'Контакт',
+    'Контакт Карл Саган',
+    'page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE',
+  ]]);
+  assert.deepEqual(enriched, [
+    {
+      ...books[0],
+      yandex_books_urls: [],
+    },
+    {
+      ...books[1],
+      yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
     },
   ]);
 });

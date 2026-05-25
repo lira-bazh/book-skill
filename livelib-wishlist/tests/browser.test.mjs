@@ -4,6 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DEFAULT_NAVIGATION_TIMEOUT_MS,
   fetchWishlistPagesWithBrowser,
   fetchYandexBooksSearchPageWithBrowser,
   resolveProfileDir,
@@ -56,13 +57,62 @@ test('browser mode opens Yandex Books search page with persistent profile', asyn
   assert.equal(calls[0][0], 'launchPersistentContext');
   assert.match(calls[0][1], /\.browser-profile-test$/);
   assert.deepEqual(calls[0][2], { headless: false });
-  assert.deepEqual(calls[1][2], { waitUntil: 'domcontentloaded' });
+  assert.deepEqual(calls[1][2], {
+    waitUntil: 'domcontentloaded',
+    timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
+  });
   assert.equal(openedUrl.origin, 'https://books.yandex.ru');
   assert.equal(
     decodeURIComponent(openedUrl.pathname),
     '/search/all/Сто лет одиночества Маркес',
   );
   assert.equal(openedUrl.search, '');
+  assert.equal(closed, true);
+});
+
+test('browser mode retries transient Yandex Books navigation errors', async () => {
+  const visited = [];
+  let closed = false;
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url) {
+      visited.push(url);
+      if (visited.length === 1) {
+        throw new Error('page.goto: net::ERR_NETWORK_CHANGED');
+      }
+      currentUrl = url;
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return '<html><body>yandex search after retry</body></html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  const result = await fetchYandexBooksSearchPageWithBrowser({
+    query: 'Стальные боги Замиль Ахтар',
+    playwright: fakePlaywright,
+  });
+
+  assert.equal(visited.length, 2);
+  assert.equal(result.html, '<html><body>yandex search after retry</body></html>');
   assert.equal(closed, true);
 });
 
@@ -125,7 +175,10 @@ test('browser mode opens wishlist page with persistent profile', async () => {
   assert.deepEqual(calls[1], [
     'goto',
     'https://www.livelib.ru/reader/LiraLantan/wish',
-    { waitUntil: 'domcontentloaded' },
+    {
+      waitUntil: 'domcontentloaded',
+      timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
+    },
   ]);
   assert.equal(closed, true);
 });

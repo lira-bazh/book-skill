@@ -226,6 +226,7 @@ export async function enrichBooksWithYandexBooksUrls(
     playwright,
     maxResults = Infinity,
     delayMs = 0,
+    onSearchError = () => {},
     sleep = (ms) => new Promise((resolve) => {
       setTimeout(resolve, ms);
     }),
@@ -256,11 +257,23 @@ export async function enrichBooksWithYandexBooksUrls(
     }
 
     const query = buildYandexBooksSearchQuery(book);
-    const searchPage = await searchPageFetcher({
-      query,
-      profileDir,
-      playwright,
-    });
+    let searchPage;
+    try {
+      searchPage = await searchPageFetcher({
+        query,
+        profileDir,
+        playwright,
+      });
+    } catch (error) {
+      onSearchError({ book, query, error });
+      enrichedBooks.push({
+        ...book,
+        yandex_books_urls: [],
+      });
+      searchedBooks += 1;
+      continue;
+    }
+
     const yandexBooksUrls = extractMatchingYandexBooksUrls(searchPage.html, book, searchPage.url, {
       maxResults,
     });
