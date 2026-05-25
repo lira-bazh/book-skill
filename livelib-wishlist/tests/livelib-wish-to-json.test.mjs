@@ -12,7 +12,6 @@ import {
   normalizeWishlistPageUrl,
   parseLivelibWishlistUrl,
   resolveProfileDir,
-  waitForManualAuthorization,
 } from '../scripts/livelib-wish-to-json.mjs';
 
 test('accepts LiveLib wishlist URL', () => {
@@ -198,44 +197,4 @@ test('browser mode uses default persistent profile when no profile dir is provid
   });
 
   assert.equal(profilePath, resolveProfileDir());
-});
-
-test('manual authorization waits until browser is back on wishlist page', async () => {
-  const messages = [];
-  const input = {};
-  let currentUrl = 'https://www.livelib.ru/login';
-  let prompts = 0;
-
-  const page = {
-    url() {
-      return currentUrl;
-    },
-  };
-
-  await waitForManualAuthorization(
-    page,
-    {
-      username: 'LiraLantan',
-      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
-    },
-    {
-      input,
-      output: {
-        log(message) {
-          messages.push(message);
-        },
-      },
-      async waitForAuthorizationInput(receivedInput) {
-        assert.equal(receivedInput, input);
-        prompts += 1;
-        currentUrl = 'https://www.livelib.ru/reader/LiraLantan/wish';
-      },
-    },
-  );
-
-  assert.equal(prompts, 1);
-  assert.deepEqual(messages, [
-    'LiveLib is not on the wish-list page yet.',
-    'Complete login or verification in the browser window, then press Enter here.',
-  ]);
 });

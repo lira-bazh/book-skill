@@ -16,13 +16,12 @@ https://www.livelib.ru/reader/<username>/wish
 1. Validate that the URL points to `www.livelib.ru/reader/<username>/wish`.
 2. Run `scripts/livelib-wish-to-json.mjs` with `--browser`, a persistent profile directory, and a sensible `--max-pages` limit.
 3. Open LiveLib in a visible browser window.
-4. If LiveLib asks for login or verification, let the user complete it manually.
-5. Process the first page and all pagination pages for the same user's wish-list.
-6. Save the result to the requested JSON path, or use the script default.
-7. Tell the user the output path, how many books were saved, and how many pages were processed.
+4. Process the first page and all pagination pages for the same user's public wish-list.
+5. Save the result to the requested JSON path, or use the script default.
+6. Tell the user the output path, how many books were saved, and how many pages were processed.
 
 Direct HTTP and `--html` may remain as fallbacks, but the main user workflow is
-browser mode with manual authorization.
+browser mode.
 
 ## Current Scope
 
