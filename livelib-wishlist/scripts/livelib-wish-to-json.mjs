@@ -3,6 +3,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { load } from 'cheerio';
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
 const DEFAULT_MAX_PAGES = 50;
@@ -128,6 +129,121 @@ export function extractWishlistPageUrls(html, username, baseUrl) {
     if (!seenPageNumbers.has(pageNumber)) {
       seenPageNumbers.add(pageNumber);
       urls.push(normalizedUrl);
+    }
+  }
+
+  return urls;
+}
+
+export function normalizeBookUrl(rawUrl, baseUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl, baseUrl);
+  } catch {
+    return null;
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return null;
+  }
+
+  if (parsed.hostname.toLowerCase() !== 'www.livelib.ru') {
+    return null;
+  }
+
+  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  if (!/^\/book\/[^/]+$/.test(normalizedPath)) {
+    return null;
+  }
+
+  return `https://www.livelib.ru${normalizedPath}`;
+}
+
+export function extractBookUrls(html, baseUrl) {
+  const urls = [];
+  const seen = new Set();
+
+  for (const href of extractHrefValues(html)) {
+    const normalizedUrl = normalizeBookUrl(href, baseUrl);
+    if (normalizedUrl && !seen.has(normalizedUrl)) {
+      seen.add(normalizedUrl);
+      urls.push(normalizedUrl);
+    }
+  }
+
+  return urls;
+}
+
+function cleanText(value) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+export function extractBooks(html, baseUrl) {
+  const $ = load(html);
+  const books = [];
+  const seen = new Set();
+  let links = $('a.brow-book-name[href]').toArray();
+
+  if (links.length === 0) {
+    links = $('a[href]').toArray().filter((element) => {
+      const title = cleanText($(element).text());
+      return title && normalizeBookUrl($(element).attr('href'), baseUrl);
+    });
+  }
+
+  for (const element of links) {
+    const link = $(element);
+    const url = normalizeBookUrl(link.attr('href'), baseUrl);
+    if (!url || seen.has(url)) {
+      continue;
+    }
+
+    const title = cleanText(link.text());
+    if (!title) {
+      continue;
+    }
+
+    const container = link.closest('.brow-book, .book-item, .ll-book, li');
+    const scope = container.length > 0 ? container : link.parent();
+    const authors = scope.find('a.brow-book-author')
+      .toArray()
+      .map((author) => cleanText($(author).text()))
+      .filter(Boolean)
+      .filter((author, index, values) => values.indexOf(author) === index);
+
+    seen.add(url);
+    books.push({ title, authors, url });
+  }
+
+  return books;
+}
+
+export function extractBooksFromPages(pages) {
+  const books = [];
+  const seen = new Set();
+
+  for (const page of pages) {
+    for (const book of extractBooks(page.html, page.url)) {
+      if (!seen.has(book.url)) {
+        seen.add(book.url);
+        books.push(book);
+      }
+    }
+  }
+
+  return books;
+}
+
+export function extractBookUrlsFromPages(pages) {
+  const urls = [];
+  const seen = new Set();
+
+  for (const page of pages) {
+    for (const bookUrl of extractBookUrls(page.html, page.url)) {
+      if (!seen.has(bookUrl)) {
+        seen.add(bookUrl);
+        urls.push(bookUrl);
+      }
     }
   }
 
@@ -270,8 +386,11 @@ export async function main(argv = process.argv.slice(2)) {
     return 2;
   }
 
+  const books = extractBooksFromPages(fetchedPages);
+
   console.log(`Accepted LiveLib wish-list URL for user ${wishlistUrl.username}: ${wishlistUrl.url}`);
   console.log(`Loaded ${fetchedPages.length} HTML page(s)`);
+  console.log(`Found ${books.length} book(s)`);
   for (const fetched of fetchedPages) {
     console.log(`- ${fetched.url}: ${fetched.html.length} characters`);
   }

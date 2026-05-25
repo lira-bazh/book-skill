@@ -6,9 +6,14 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  extractBooks,
+  extractBooksFromPages,
+  extractBookUrls,
+  extractBookUrlsFromPages,
   extractWishlistPageUrls,
   fetchWishlistPagesWithBrowser,
   loadHtmlFile,
+  normalizeBookUrl,
   normalizeWishlistPageUrl,
   parseLivelibWishlistUrl,
   resolveProfileDir,
@@ -113,6 +118,135 @@ test('extracts real wishlist pagination links without duplicates', () => {
     'https://www.livelib.ru/reader/LiraLantan/wish?page=2',
     'https://www.livelib.ru/reader/LiraLantan/wish?page=3',
     'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~4',
+  ]);
+});
+
+test('normalizes only LiveLib book URLs', () => {
+  const baseUrl = 'https://www.livelib.ru/reader/LiraLantan/wish';
+
+  assert.equal(
+    normalizeBookUrl('/book/100000', baseUrl),
+    'https://www.livelib.ru/book/100000',
+  );
+  assert.equal(
+    normalizeBookUrl('https://www.livelib.ru/book/100000?utm_source=list#reviews', baseUrl),
+    'https://www.livelib.ru/book/100000',
+  );
+
+  const rejectedUrls = [
+    '/reader/LiraLantan/wish',
+    '/bookseries/100000',
+    '/book/100000/readers',
+    '/book/100000/reviews-title',
+    'https://example.com/book/100000',
+    'mailto:test@example.com',
+  ];
+
+  for (const url of rejectedUrls) {
+    assert.equal(normalizeBookUrl(url, baseUrl), null);
+  }
+});
+
+test('extracts unique book URLs from one page', () => {
+  const html = `
+    <a href="/book/100000">Book One</a>
+    <a href="https://www.livelib.ru/book/200000">Book Two</a>
+    <a href="/book/100000?utm_source=duplicate">Book One duplicate</a>
+    <a href="/book/100000/readers">readers</a>
+    <a href="/reader/LiraLantan/wish?page=2">pagination</a>
+    <a href="https://example.com/book/300000">external</a>
+  `;
+
+  assert.deepEqual(
+    extractBookUrls(html, 'https://www.livelib.ru/reader/LiraLantan/wish'),
+    [
+      'https://www.livelib.ru/book/100000',
+      'https://www.livelib.ru/book/200000',
+    ],
+  );
+});
+
+test('extracts unique book URLs across fetched pages', () => {
+  const pages = [
+    {
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+      html: '<a href="/book/100000">Book One</a><a href="/book/200000">Book Two</a>',
+    },
+    {
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~2',
+      html: '<a href="/book/200000">Book Two again</a><a href="/book/300000">Book Three</a>',
+    },
+  ];
+
+  assert.deepEqual(extractBookUrlsFromPages(pages), [
+    'https://www.livelib.ru/book/100000',
+    'https://www.livelib.ru/book/200000',
+    'https://www.livelib.ru/book/300000',
+  ]);
+});
+
+test('extracts book title, authors, and URL from a wishlist card', () => {
+  const html = `
+    <div class="brow-book">
+      <a href="/book/100000-cover" title="Cover"></a>
+      <div>
+        <a class="brow-book-name with-cycle" href="/book/100000-title?utm_source=list">
+          The   First   Book
+        </a>
+        <a class="brow-book-author" href="/author/1">Author One</a>
+        <a class="brow-book-author" href="/author/2">Author Two</a>
+        <a class="brow-book-author" href="/author/2">Author Two</a>
+        <a href="/book/100000-title/reviews">10 reviews</a>
+      </div>
+    </div>
+  `;
+
+  assert.deepEqual(extractBooks(html, 'https://www.livelib.ru/reader/LiraLantan/wish'), [
+    {
+      title: 'The First Book',
+      authors: ['Author One', 'Author Two'],
+      url: 'https://www.livelib.ru/book/100000-title',
+    },
+  ]);
+});
+
+test('extracts unique books across fetched pages', () => {
+  const pages = [
+    {
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+      html: `
+        <div class="brow-book">
+          <a class="brow-book-name" href="/book/100000">Book One</a>
+          <a class="brow-book-author" href="/author/1">Author One</a>
+        </div>
+      `,
+    },
+    {
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~2',
+      html: `
+        <div class="brow-book">
+          <a class="brow-book-name" href="/book/100000">Book One duplicate</a>
+          <a class="brow-book-author" href="/author/1">Author One</a>
+        </div>
+        <div class="brow-book">
+          <a class="brow-book-name" href="/book/200000">Book Two</a>
+          <a class="brow-book-author" href="/author/2">Author Two</a>
+        </div>
+      `,
+    },
+  ];
+
+  assert.deepEqual(extractBooksFromPages(pages), [
+    {
+      title: 'Book One',
+      authors: ['Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+    },
+    {
+      title: 'Book Two',
+      authors: ['Author Two'],
+      url: 'https://www.livelib.ru/book/200000',
+    },
   ]);
 });
 
