@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   extractWishlistPageUrls,
@@ -10,6 +11,8 @@ import {
   loadHtmlFile,
   normalizeWishlistPageUrl,
   parseLivelibWishlistUrl,
+  resolveProfileDir,
+  waitForManualAuthorization,
 } from '../scripts/livelib-wish-to-json.mjs';
 
 test('accepts LiveLib wishlist URL', () => {
@@ -91,6 +94,12 @@ test('loads saved HTML file', async () => {
   assert.equal(result.html, '<html>saved</html>');
 });
 
+test('default persistent profile lives in the skill directory', () => {
+  const skillDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+  assert.equal(resolveProfileDir(), join(skillDir, '.browser-profile'));
+});
+
 test('browser mode opens wishlist page with persistent profile', async () => {
   const calls = [];
   let closed = false;
@@ -147,4 +156,86 @@ test('browser mode opens wishlist page with persistent profile', async () => {
     { waitUntil: 'domcontentloaded' },
   ]);
   assert.equal(closed, true);
+});
+
+test('browser mode uses default persistent profile when no profile dir is provided', async () => {
+  let profilePath;
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url) {
+      currentUrl = url;
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return '<html><body>wishlist</body></html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext(profileDir) {
+        profilePath = profileDir;
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {},
+        };
+      },
+    },
+  };
+
+  await fetchWishlistPagesWithBrowser({
+    wishlistUrl: {
+      username: 'LiraLantan',
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+    },
+    maxPages: 1,
+    playwright: fakePlaywright,
+  });
+
+  assert.equal(profilePath, resolveProfileDir());
+});
+
+test('manual authorization waits until browser is back on wishlist page', async () => {
+  const messages = [];
+  const input = {};
+  let currentUrl = 'https://www.livelib.ru/login';
+  let prompts = 0;
+
+  const page = {
+    url() {
+      return currentUrl;
+    },
+  };
+
+  await waitForManualAuthorization(
+    page,
+    {
+      username: 'LiraLantan',
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+    },
+    {
+      input,
+      output: {
+        log(message) {
+          messages.push(message);
+        },
+      },
+      async waitForAuthorizationInput(receivedInput) {
+        assert.equal(receivedInput, input);
+        prompts += 1;
+        currentUrl = 'https://www.livelib.ru/reader/LiraLantan/wish';
+      },
+    },
+  );
+
+  assert.equal(prompts, 1);
+  assert.deepEqual(messages, [
+    'LiveLib is not on the wish-list page yet.',
+    'Complete login or verification in the browser window, then press Enter here.',
+  ]);
 });

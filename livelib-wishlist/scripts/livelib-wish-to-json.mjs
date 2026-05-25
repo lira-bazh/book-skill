@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
 const DEFAULT_MAX_PAGES = 50;
-const DEFAULT_PROFILE_DIR = '.browser-profile';
+const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const DEFAULT_PROFILE_DIR = resolve(SKILL_DIR, '.browser-profile');
 
 export class LiveLibAccessError extends Error {}
 
@@ -87,23 +89,52 @@ export async function loadHtmlFile(path) {
   return { url: path, html };
 }
 
-async function waitForManualAuthorization(page, wishlistUrl) {
+export function resolveProfileDir(profileDir = DEFAULT_PROFILE_DIR) {
+  return resolve(profileDir);
+}
+
+function isCurrentWishlistPage(currentUrl, wishlistUrl) {
   const expected = new URL(wishlistUrl.url);
 
+  let current;
+  try {
+    current = new URL(currentUrl);
+  } catch {
+    return false;
+  }
+
+  return (
+    current.hostname === expected.hostname &&
+    current.pathname.replace(/\/$/, '') === expected.pathname.replace(/\/$/, '')
+  );
+}
+
+function waitForInput(input = process.stdin) {
+  return new Promise((resolveInput) => {
+    input.once('data', resolveInput);
+    if (typeof input.resume === 'function') {
+      input.resume();
+    }
+  });
+}
+
+export async function waitForManualAuthorization(
+  page,
+  wishlistUrl,
+  {
+    input = process.stdin,
+    output = console,
+    waitForAuthorizationInput = waitForInput,
+  } = {},
+) {
   while (true) {
-    const current = new URL(page.url());
-    if (
-      current.hostname === expected.hostname &&
-      current.pathname.replace(/\/$/, '') === expected.pathname.replace(/\/$/, '')
-    ) {
+    if (isCurrentWishlistPage(page.url(), wishlistUrl)) {
       return;
     }
 
-    console.log('LiveLib is not on the wish-list page yet.');
-    console.log('Complete login or verification in the browser window, then press Enter here.');
-    await new Promise((resolveInput) => {
-      process.stdin.once('data', resolveInput);
-    });
+    output.log('LiveLib is not on the wish-list page yet.');
+    output.log('Complete login or verification in the browser window, then press Enter here.');
+    await waitForAuthorizationInput(input);
   }
 }
 
@@ -112,13 +143,16 @@ export async function fetchWishlistPagesWithBrowser({
   maxPages = DEFAULT_MAX_PAGES,
   profileDir = DEFAULT_PROFILE_DIR,
   playwright,
+  input,
+  output,
+  waitForAuthorizationInput,
 }) {
   if (maxPages < 1) {
     throw new Error('maxPages must be greater than zero');
   }
 
   const playwrightApi = playwright ?? await import('playwright');
-  const context = await playwrightApi.chromium.launchPersistentContext(resolve(profileDir), {
+  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
     headless: false,
   });
 
@@ -131,7 +165,11 @@ export async function fetchWishlistPagesWithBrowser({
     while (pending.length > 0 && fetchedPages.length < maxPages) {
       const url = pending.shift();
       await page.goto(url, { waitUntil: 'domcontentloaded' });
-      await waitForManualAuthorization(page, wishlistUrl);
+      await waitForManualAuthorization(page, wishlistUrl, {
+        input,
+        output,
+        waitForAuthorizationInput,
+      });
 
       const html = await page.content();
       const finalUrl = page.url();
@@ -191,7 +229,7 @@ function printHelp() {
 
 Options:
   --browser                Open LiveLib in visible Playwright Chromium.
-  --profile-dir <path>     Persistent browser profile directory. Default: .browser-profile
+  --profile-dir <path>     Persistent browser profile directory. Default: livelib-wishlist/.browser-profile
   --html <path>            Fallback: load a saved HTML file.
   --out <path>             Output JSON path. Default: wishlist.json
   --max-pages <number>     Maximum pagination pages. Default: ${DEFAULT_MAX_PAGES}
