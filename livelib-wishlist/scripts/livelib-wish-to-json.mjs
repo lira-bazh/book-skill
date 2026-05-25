@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { load } from 'cheerio';
@@ -255,6 +255,13 @@ export async function loadHtmlFile(path) {
   return { url: path, html };
 }
 
+export async function writeBooksJson(path, books) {
+  const outputPath = resolve(path);
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${JSON.stringify(books, null, 2)}\n`, 'utf8');
+  return outputPath;
+}
+
 export function resolveProfileDir(profileDir = DEFAULT_PROFILE_DIR) {
   return resolve(profileDir);
 }
@@ -371,7 +378,8 @@ export async function main(argv = process.argv.slice(2)) {
   let fetchedPages;
   try {
     if (args.html) {
-      fetchedPages = [await loadHtmlFile(args.html)];
+      const savedPage = await loadHtmlFile(args.html);
+      fetchedPages = [{ url: wishlistUrl.url, html: savedPage.html }];
     } else if (args.browser) {
       fetchedPages = await fetchWishlistPagesWithBrowser({
         wishlistUrl,
@@ -387,6 +395,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   const books = extractBooksFromPages(fetchedPages);
+  const outputPath = await writeBooksJson(args.out, books);
 
   console.log(`Accepted LiveLib wish-list URL for user ${wishlistUrl.username}: ${wishlistUrl.url}`);
   console.log(`Loaded ${fetchedPages.length} HTML page(s)`);
@@ -394,7 +403,8 @@ export async function main(argv = process.argv.slice(2)) {
   for (const fetched of fetchedPages) {
     console.log(`- ${fetched.url}: ${fetched.html.length} characters`);
   }
-  console.log(`Output path: ${args.out}`);
+  console.log(`Output path: ${outputPath}`);
+  console.log(`Saved ${books.length} book(s) from ${fetchedPages.length} page(s) to ${outputPath}`);
   return 0;
 }
 
