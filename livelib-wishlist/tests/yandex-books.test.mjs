@@ -10,6 +10,7 @@ import {
   extractYandexBooksSearchResults,
   extractYandexBooksUrls,
   filterYandexBooksResultsForBook,
+  isSimilarYandexBooksAuthor,
   isYandexBooksResultSimilarToBook,
   normalizeYandexBooksUrl,
 } from '../scripts/lib/yandex-books.mjs';
@@ -150,6 +151,43 @@ test('extracts Yandex Books search results with title, authors, and URL', () => 
   );
 });
 
+test('extracts Yandex Books search results from generic result cards', () => {
+  const html = `
+    <main>
+      <article>
+        <img alt="Галлант">
+        <a href="/books/DLOkiLqz">Галлант</a>
+        <a href="/authors/uWlVhSUW">Виктория Шваб</a>
+      </article>
+      <article>
+        <a href="/audiobooks/meGR5b5P">
+          <img alt="Галлант">
+        </a>
+        <a href="/authors/uWlVhSUW">Виктория Шваб</a>
+      </article>
+      <section>
+        <a href="/bookshelves/top">Подборка</a>
+      </section>
+    </main>
+  `;
+
+  assert.deepEqual(
+    extractYandexBooksSearchResults(html, 'https://books.yandex.ru/search/all/test'),
+    [
+      {
+        title: 'Галлант',
+        authors: ['Виктория Шваб'],
+        url: 'https://books.yandex.ru/books/DLOkiLqz',
+      },
+      {
+        title: 'Галлант',
+        authors: ['Виктория Шваб'],
+        url: 'https://books.yandex.ru/audiobooks/meGR5b5P',
+      },
+    ],
+  );
+});
+
 test('matches Yandex Books result by similar title and author', () => {
   const book = {
     title: 'Сто лет одиночества',
@@ -199,6 +237,29 @@ test('matches Yandex Books result by similar title and author', () => {
       book,
     ),
     false,
+  );
+});
+
+test('matches Yandex Books author by initials and last name', () => {
+  assert.equal(isSimilarYandexBooksAuthor('Виктория Шваб', 'В. Э. Шваб'), true);
+  assert.equal(isSimilarYandexBooksAuthor('Виктория Шваб', 'В.Э.Шваб'), true);
+  assert.equal(isSimilarYandexBooksAuthor('Виктория Шваб', 'В. Э. Иванова'), false);
+});
+
+test('matches Yandex Books result when author is abbreviated', () => {
+  assert.equal(
+    isYandexBooksResultSimilarToBook(
+      {
+        title: 'Галлант',
+        authors: ['В. Э. Шваб'],
+        url: 'https://books.yandex.ru/books/DLOkiLqz',
+      },
+      {
+        title: 'Галлант',
+        authors: ['Виктория Шваб'],
+      },
+    ),
+    true,
   );
 });
 

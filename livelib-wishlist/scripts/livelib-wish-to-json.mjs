@@ -20,7 +20,10 @@ import {
   writeBooksJson,
 } from './lib/json-output.mjs';
 import {
+  enrichBooksWithBookPageDetails,
   extractBooksFromPages,
+  hasRecordedBookPageDescription,
+  hasRecordedBookPageImage,
   matchBooksByLiveLibUrl,
   mergeExistingLiveLibBooks,
   parseLivelibWishlistUrl,
@@ -120,6 +123,8 @@ export async function main(
     litresSleep,
     audiobookPageFetcher,
     audiobookSleep,
+    bookPageFetcher,
+    bookPageSleep,
     confirmLitresLogin = waitForLitresLoginConfirmation,
     browserSessionRunner = withBrowserSession,
     withLitresSearchSession = withLitresSearchBrowserSession,
@@ -170,6 +175,10 @@ export async function main(
   let ranAudiobookDurationEnrichment = false;
   let skippedAudiobookDuration = 0;
   let enrichedAudiobookDuration = 0;
+  let ranBookPageDetailsEnrichment = false;
+  let skippedBookPageDetails = 0;
+  let enrichedBookDescriptions = 0;
+  let enrichedBookImages = 0;
   let outputPath;
 
   const finishWorkflow = async ({ nextFetchedPages, browserSession = null }) => {
@@ -181,6 +190,8 @@ export async function main(
     const shouldEnrichLitres = Boolean(browserSession) || typeof litresSearchPageFetcher === 'function';
     const fetchAudiobookPage = audiobookPageFetcher ?? browserSession?.fetchAudiobookPage;
     const shouldEnrichAudiobookDuration = typeof fetchAudiobookPage === 'function';
+    const fetchBookPage = bookPageFetcher ?? browserSession?.fetchBookPage;
+    const shouldEnrichBookPageDetails = typeof fetchBookPage === 'function';
 
     if (shouldEnrichYandexBooks) {
       const yandexUrlsBeforeEnrichment = new Map(
@@ -266,6 +277,36 @@ export async function main(
       )).length;
     }
 
+    if (shouldEnrichBookPageDetails) {
+      ranBookPageDetailsEnrichment = true;
+      const bookPageDetailsBeforeEnrichment = new Map(
+        books.map((book) => [book.url, {
+          hasDescription: hasRecordedBookPageDescription(book),
+          hasImage: hasRecordedBookPageImage(book),
+        }]),
+      );
+      skippedBookPageDetails = books.filter((book) => {
+        const state = bookPageDetailsBeforeEnrichment.get(book.url);
+        return state?.hasDescription && state?.hasImage;
+      }).length;
+      books = await enrichBooksWithBookPageDetails(books, {
+        fetchBookPage,
+        pageDelayMs: FIXED_REQUEST_DELAY_MS,
+        onFetchError({ book, error }) {
+          console.error(`warning: skipped LiveLib book page details for "${book.title}": ${error.message}`);
+        },
+        sleep: bookPageSleep,
+      });
+      enrichedBookDescriptions = books.filter((book) => {
+        const state = bookPageDetailsBeforeEnrichment.get(book.url);
+        return !state?.hasDescription && hasRecordedBookPageDescription(book);
+      }).length;
+      enrichedBookImages = books.filter((book) => {
+        const state = bookPageDetailsBeforeEnrichment.get(book.url);
+        return !state?.hasImage && hasRecordedBookPageImage(book);
+      }).length;
+    }
+
     outputPath = await writeBooksJsonFn(args.out, books);
   };
 
@@ -317,6 +358,15 @@ export async function main(
     console.log(`Found audiobook duration for ${booksWithAudiobookDuration} book(s)`);
     console.log(`Skipped ${skippedAudiobookDuration} book(s) with existing audiobook duration`);
     console.log(`Enriched ${enrichedAudiobookDuration} book(s) with audiobook duration`);
+  }
+  if (ranBookPageDetailsEnrichment) {
+    const booksWithDescription = books.filter(hasRecordedBookPageDescription).length;
+    const booksWithImage = books.filter(hasRecordedBookPageImage).length;
+    console.log(`Found LiveLib descriptions for ${booksWithDescription} book(s)`);
+    console.log(`Found LiveLib images for ${booksWithImage} book(s)`);
+    console.log(`Skipped ${skippedBookPageDetails} book(s) with existing LiveLib book page details`);
+    console.log(`Enriched ${enrichedBookDescriptions} book(s) with LiveLib descriptions`);
+    console.log(`Enriched ${enrichedBookImages} book(s) with LiveLib images`);
   }
   for (const fetched of fetchedPages) {
     console.log(`- ${fetched.url}: ${fetched.html.length} characters`);

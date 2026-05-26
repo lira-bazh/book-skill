@@ -4,6 +4,24 @@ import { cleanText, extractHrefValues } from './text-match.mjs';
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
 const BOOK_ITEM_PATH_RE = /^\/(?:book|work)\/[^/]+$/;
+const DESCRIPTION_SELECTOR = [
+  '[itemprop="description"]',
+  '.book-description',
+  '.book-card-description',
+  '.description',
+  '.annotation',
+  '[class*="description"]',
+  '[class*="annotation"]',
+].join(', ');
+const IMAGE_SELECTOR = [
+  'meta[property="og:image"]',
+  'meta[name="og:image"]',
+  'meta[itemprop="image"]',
+  'img[itemprop="image"]',
+  'img.book-cover',
+  'img[class*="cover"]',
+  'img[class*="book"]',
+].join(', ');
 
 export class LiveLibAccessError extends Error {}
 
@@ -216,6 +234,137 @@ export function extractBooks(html, baseUrl) {
   }
 
   return books;
+}
+
+export function extractBookPageDetails(html, baseUrl) {
+  const $ = load(html);
+
+  return {
+    description: extractBookPageDescription($),
+    image: extractBookPageImage($, baseUrl),
+  };
+}
+
+export function hasRecordedBookPageDescription(book) {
+  return typeof book?.description === 'string' && cleanText(book.description) !== '';
+}
+
+export function hasRecordedBookPageImage(book) {
+  return typeof book?.image === 'string' && cleanText(book.image) !== '';
+}
+
+export function needsBookPageDetails(book) {
+  return !hasRecordedBookPageDescription(book) || !hasRecordedBookPageImage(book);
+}
+
+export async function enrichBooksWithBookPageDetails(
+  books,
+  {
+    fetchBookPage,
+    pageDelayMs = 0,
+    onFetchError,
+    sleep = (ms) => new Promise((resolveSleep) => {
+      setTimeout(resolveSleep, ms);
+    }),
+  } = {},
+) {
+  if (!Array.isArray(books)) {
+    throw new Error('Books must be an array');
+  }
+
+  if (typeof fetchBookPage !== 'function') {
+    throw new Error('Book page fetcher is required');
+  }
+
+  const enrichedBooks = [];
+
+  for (const book of books) {
+    if (!needsBookPageDetails(book) || !book?.url) {
+      enrichedBooks.push({ ...book });
+      continue;
+    }
+
+    let details = { description: null, image: null };
+    try {
+      const page = await fetchBookPage({ url: book.url, book });
+      details = extractBookPageDetails(page?.html ?? '', page?.url ?? book.url);
+    } catch (error) {
+      if (typeof onFetchError === 'function') {
+        onFetchError({ book, url: book.url, error });
+      }
+    }
+
+    const enrichedBook = { ...book };
+    if (!hasRecordedBookPageDescription(enrichedBook) && details.description) {
+      enrichedBook.description = details.description;
+    }
+    if (!hasRecordedBookPageImage(enrichedBook) && details.image) {
+      enrichedBook.image = details.image;
+    }
+
+    enrichedBooks.push(enrichedBook);
+
+    if (pageDelayMs > 0) {
+      await sleep(pageDelayMs);
+    }
+  }
+
+  return enrichedBooks;
+}
+
+function extractBookPageDescription($) {
+  const candidates = [
+    $('meta[property="og:description"]').first().attr('content'),
+    $('meta[name="description"]').first().attr('content'),
+    $('meta[itemprop="description"]').first().attr('content'),
+    ...$(DESCRIPTION_SELECTOR).toArray().map((element) => $(element).text()),
+  ];
+
+  return candidates
+    .map((value) => normalizeBookPageDescription(value))
+    .find(Boolean) ?? null;
+}
+
+function normalizeBookPageDescription(value) {
+  const text = cleanText(value)
+    .replace(/^Описание книги\s*/i, '')
+    .replace(/\s*(?:Читать полностью|Свернуть)\s*$/i, '')
+    .trim();
+
+  return text || null;
+}
+
+function extractBookPageImage($, baseUrl) {
+  for (const element of $(IMAGE_SELECTOR).toArray()) {
+    const image = $(element);
+    const rawUrl = image.attr('content')
+      ?? image.attr('src')
+      ?? image.attr('data-src')
+      ?? image.attr('data-original')
+      ?? image.attr('data-lazy-src');
+    const normalizedUrl = normalizeBookPageImageUrl(rawUrl, baseUrl);
+
+    if (normalizedUrl) {
+      return normalizedUrl;
+    }
+  }
+
+  return null;
+}
+
+function normalizeBookPageImageUrl(rawUrl, baseUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl, baseUrl);
+  } catch {
+    return null;
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return null;
+  }
+
+  return parsed.toString();
 }
 
 export function extractBooksFromPages(pages) {

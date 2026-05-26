@@ -37,8 +37,51 @@ export function isSimilarYandexBooksAuthor(sourceAuthor, candidateAuthor) {
     source === candidate ||
     candidate.includes(source) ||
     source.includes(candidate) ||
+    isAbbreviatedYandexBooksAuthorMatch(source, candidate) ||
     hasTokenOverlap(source, candidate, 0.66)
   );
+}
+
+function isAbbreviatedYandexBooksAuthorMatch(sourceAuthor, candidateAuthor) {
+  return areAuthorNamePartsCompatible(
+    splitYandexBooksAuthorName(sourceAuthor),
+    splitYandexBooksAuthorName(candidateAuthor),
+  ) || areAuthorNamePartsCompatible(
+    splitYandexBooksAuthorName(candidateAuthor),
+    splitYandexBooksAuthorName(sourceAuthor),
+  );
+}
+
+function splitYandexBooksAuthorName(author) {
+  return normalizeForMatch(author).split(' ').filter(Boolean);
+}
+
+function areAuthorNamePartsCompatible(fullNameParts, abbreviatedNameParts) {
+  if (fullNameParts.length < 2 || abbreviatedNameParts.length < 2) {
+    return false;
+  }
+
+  const fullLastName = fullNameParts.at(-1);
+  const abbreviatedLastName = abbreviatedNameParts.at(-1);
+  if (fullLastName !== abbreviatedLastName) {
+    return false;
+  }
+
+  const fullGivenNames = fullNameParts.slice(0, -1);
+  const abbreviatedGivenNames = abbreviatedNameParts.slice(0, -1);
+  if (!abbreviatedGivenNames.some((name) => name.length === 1)) {
+    return false;
+  }
+
+  const firstAbbreviatedName = abbreviatedGivenNames[0];
+  const firstFullName = fullGivenNames[0];
+  const firstNameMatches = firstAbbreviatedName.length === 1
+    ? firstFullName.startsWith(firstAbbreviatedName)
+    : firstAbbreviatedName === firstFullName;
+
+  return firstNameMatches && abbreviatedGivenNames.every((abbreviatedName) => (
+    abbreviatedName.length === 1 || fullGivenNames.includes(abbreviatedName)
+  ));
 }
 
 export function buildYandexBooksSearchQuery(book) {
@@ -105,6 +148,15 @@ export function extractYandexBooksSearchResults(html, baseUrl = 'https://books.y
   const results = [];
   const seen = new Set();
 
+  const pushResult = ({ title, authors, url }) => {
+    if (!title || !url || seen.has(url)) {
+      return;
+    }
+
+    seen.add(url);
+    results.push({ title, authors, url });
+  };
+
   $('[data-test-id="SNIPPET"]').each((_, element) => {
     const snippet = $(element);
     const contentLink = snippet.find('a[href]').toArray().find((linkElement) => (
@@ -126,17 +178,80 @@ export function extractYandexBooksSearchResults(html, baseUrl = 'https://books.y
       return;
     }
 
-    const authors = snippet.find('[data-test-id="SNIPPET_AUTHORS"]')
-      .toArray()
-      .map((author) => cleanText($(author).text()))
-      .filter(Boolean)
-      .filter((author, index, values) => values.indexOf(author) === index);
+    pushResult({
+      title,
+      authors: extractYandexBooksAuthors($, snippet),
+      url,
+    });
+  });
 
-    seen.add(url);
-    results.push({ title, authors, url });
+  $('a[href]').each((_, element) => {
+    const link = $(element);
+    const url = normalizeYandexBooksUrl(link.attr('href'), baseUrl);
+    if (!url || seen.has(url)) {
+      return;
+    }
+
+    const card = findYandexBooksResultCard($, link, baseUrl);
+    const title = extractYandexBooksResultTitle($, link, card, baseUrl);
+    pushResult({
+      title,
+      authors: extractYandexBooksAuthors($, card),
+      url,
+    });
   });
 
   return results;
+}
+
+function extractYandexBooksResultTitle($, link, card, baseUrl) {
+  const candidates = [
+    link.text(),
+    link.attr('aria-label'),
+    link.attr('title'),
+    link.find('img[alt]').first().attr('alt'),
+    card.find('img[alt]').first().attr('alt'),
+    ...card.find('a[href]').toArray()
+      .filter((element) => normalizeYandexBooksUrl($(element).attr('href'), baseUrl))
+      .map((element) => $(element).text()),
+  ];
+
+  return candidates.map((value) => cleanText(value)).find(Boolean) ?? '';
+}
+
+function extractYandexBooksAuthors($, container) {
+  const explicitAuthors = container.find('[data-test-id="SNIPPET_AUTHORS"]')
+    .toArray()
+    .map((author) => cleanText($(author).text()))
+    .filter(Boolean);
+  const authors = explicitAuthors.length > 0
+    ? explicitAuthors
+    : container.find('a[href*="/authors/"]')
+      .toArray()
+      .map((author) => cleanText($(author).text()))
+      .filter(Boolean);
+
+  return authors.filter((author, index) => authors.indexOf(author) === index);
+}
+
+function findYandexBooksResultCard($, link, baseUrl) {
+  let card = link.parent();
+
+  for (const element of link.parents().toArray()) {
+    const candidate = $(element);
+    const contentLinks = candidate.find('a[href]').toArray().filter((linkElement) => (
+      normalizeYandexBooksUrl($(linkElement).attr('href'), baseUrl)
+    ));
+    const textLength = cleanText(candidate.text()).length;
+
+    if (contentLinks.length > 1 || textLength > 600) {
+      break;
+    }
+
+    card = candidate;
+  }
+
+  return card;
 }
 
 export function isYandexBooksResultSimilarToBook(result, book) {

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  enrichBooksWithBookPageDetails,
+  extractBookPageDetails,
   extractBooks,
   extractBooksFromPages,
   extractBookUrls,
@@ -9,6 +11,7 @@ import {
   extractWishlistPageUrls,
   matchBooksByLiveLibUrl,
   mergeExistingLiveLibBooks,
+  needsBookPageDetails,
   normalizeBookUrl,
   normalizeWishlistPageUrl,
   parseLivelibWishlistUrl,
@@ -269,6 +272,195 @@ test('extracts unique books across fetched pages', () => {
       url: 'https://www.livelib.ru/book/200000',
     },
   ]);
+});
+
+test('extracts LiveLib book page description and image from explicit metadata', () => {
+  const html = `
+    <meta property="og:description" content="  Atmospheric   book description.  ">
+    <meta property="og:image" content="/images/book-cover.jpg">
+  `;
+
+  assert.deepEqual(
+    extractBookPageDetails(html, 'https://www.livelib.ru/book/100000-title'),
+    {
+      description: 'Atmospheric book description.',
+      image: 'https://www.livelib.ru/images/book-cover.jpg',
+    },
+  );
+});
+
+test('extracts LiveLib book page description and image from page content', () => {
+  const html = `
+    <section class="book-description">
+      Описание книги
+      A  careful   visible description.
+      Читать полностью
+    </section>
+    <img class="book-cover" data-src="//i.livelib.ru/boocover/100000.jpg">
+  `;
+
+  assert.deepEqual(
+    extractBookPageDetails(html, 'https://www.livelib.ru/book/100000-title'),
+    {
+      description: 'A careful visible description.',
+      image: 'https://i.livelib.ru/boocover/100000.jpg',
+    },
+  );
+});
+
+test('returns null LiveLib book page details when description and image are missing', () => {
+  const html = '<main><h1>Book title</h1><img src="data:image/gif;base64,abc"></main>';
+
+  assert.deepEqual(
+    extractBookPageDetails(html, 'https://www.livelib.ru/book/100000-title'),
+    {
+      description: null,
+      image: null,
+    },
+  );
+});
+
+test('detects books that need LiveLib book page details', () => {
+  assert.equal(needsBookPageDetails({ description: 'Done', image: 'https://example.com/cover.jpg' }), false);
+  assert.equal(needsBookPageDetails({ description: 'Done' }), true);
+  assert.equal(needsBookPageDetails({ image: 'https://example.com/cover.jpg' }), true);
+  assert.equal(needsBookPageDetails({ description: ' ', image: 'https://example.com/cover.jpg' }), true);
+});
+
+test('enriches only books with missing LiveLib book page details', async () => {
+  const calls = [];
+  const books = [
+    {
+      title: 'Already enriched',
+      url: 'https://www.livelib.ru/book/100000',
+      description: 'Existing description',
+      image: 'https://i.livelib.ru/boocover/existing.jpg',
+      yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+    },
+    {
+      title: 'Needs both',
+      url: 'https://www.livelib.ru/book/200000',
+      yandex_books_urls: [],
+    },
+    {
+      title: 'Needs image only',
+      url: 'https://www.livelib.ru/work/300000',
+      description: 'Keep this description',
+      audiobook_duration_minutes: 515,
+    },
+    {
+      title: 'Missing details on page',
+      url: 'https://www.livelib.ru/book/400000',
+    },
+  ];
+
+  const enriched = await enrichBooksWithBookPageDetails(books, {
+    fetchBookPage: async ({ url }) => {
+      calls.push(url);
+      if (url.includes('/book/400000')) {
+        return {
+          url,
+          html: '<html><body>No useful details</body></html>',
+        };
+      }
+
+      return {
+        url,
+        html: `
+          <meta property="og:description" content="Fetched description for ${url}">
+          <meta property="og:image" content="/covers/${url.split('/').at(-1)}.jpg">
+        `,
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    'https://www.livelib.ru/book/200000',
+    'https://www.livelib.ru/work/300000',
+    'https://www.livelib.ru/book/400000',
+  ]);
+  assert.deepEqual(enriched[0], books[0]);
+  assert.equal(enriched[1].description, 'Fetched description for https://www.livelib.ru/book/200000');
+  assert.equal(enriched[1].image, 'https://www.livelib.ru/covers/200000.jpg');
+  assert.equal(enriched[2].description, 'Keep this description');
+  assert.equal(enriched[2].image, 'https://www.livelib.ru/covers/300000.jpg');
+  assert.equal(enriched[2].audiobook_duration_minutes, 515);
+  assert.equal('description' in enriched[3], false);
+  assert.equal('image' in enriched[3], false);
+});
+
+test('updates only missing LiveLib book page detail fields while preserving saved data', async () => {
+  const books = [
+    {
+      title: 'Saved title',
+      authors: ['Saved Author'],
+      url: 'https://www.livelib.ru/book/100000',
+      description: 'Saved description',
+      yandex_books_urls: ['https://books.yandex.ru/books/saved'],
+      litres_urls: ['https://www.litres.ru/book/author/saved-123'],
+      audiobook_duration_minutes: 515,
+      livelib_note: 'keep me',
+    },
+  ];
+
+  const enriched = await enrichBooksWithBookPageDetails(books, {
+    fetchBookPage: async ({ url }) => ({
+      url,
+      html: `
+        <meta property="og:description" content="Fetched description must not replace saved one">
+        <meta property="og:image" content="/covers/100000.jpg">
+      `,
+    }),
+  });
+
+  assert.deepEqual(enriched, [
+    {
+      title: 'Saved title',
+      authors: ['Saved Author'],
+      url: 'https://www.livelib.ru/book/100000',
+      description: 'Saved description',
+      image: 'https://www.livelib.ru/covers/100000.jpg',
+      yandex_books_urls: ['https://books.yandex.ru/books/saved'],
+      litres_urls: ['https://www.litres.ru/book/author/saved-123'],
+      audiobook_duration_minutes: 515,
+      livelib_note: 'keep me',
+    },
+  ]);
+});
+
+test('keeps enriching LiveLib book page details after a failed page fetch', async () => {
+  const errors = [];
+  const books = [
+    {
+      title: 'Broken',
+      url: 'https://www.livelib.ru/book/broken',
+    },
+    {
+      title: 'Working',
+      url: 'https://www.livelib.ru/book/working',
+    },
+  ];
+
+  const enriched = await enrichBooksWithBookPageDetails(books, {
+    fetchBookPage: async ({ url }) => {
+      if (url.includes('broken')) {
+        throw new Error('LiveLib timeout');
+      }
+
+      return {
+        url,
+        html: '<meta property="og:description" content="Recovered"><meta property="og:image" content="/cover.jpg">',
+      };
+    },
+    onFetchError({ book, error }) {
+      errors.push(`${book.title}: ${error.message}`);
+    },
+  });
+
+  assert.deepEqual(errors, ['Broken: LiveLib timeout']);
+  assert.deepEqual(enriched[0], books[0]);
+  assert.equal(enriched[1].description, 'Recovered');
+  assert.equal(enriched[1].image, 'https://www.livelib.ru/cover.jpg');
 });
 
 test('matches LiveLib books with existing books by LiveLib URL', () => {

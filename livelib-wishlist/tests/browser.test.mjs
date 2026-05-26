@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS,
   DEFAULT_NAVIGATION_TIMEOUT_MS,
+  fetchBookPageWithBrowser,
   fetchLitresSearchPageWithBrowser,
   fetchWishlistPagesWithBrowser,
   fetchYandexBooksSearchPageWithBrowser,
@@ -261,8 +262,11 @@ test('browser session opens one context and reuses one page for all fetchers', a
     const litresPage = await session.fetchLitresSearchPage({
       query: 'Book One Author One',
     });
+    const bookPage = await session.fetchBookPage({
+      url: 'https://www.livelib.ru/book/100000',
+    });
 
-    return { wishlistPages, yandexPage, litresPage };
+    return { wishlistPages, yandexPage, litresPage, bookPage };
   });
 
   assert.equal(launchCount, 1);
@@ -273,6 +277,7 @@ test('browser session opens one context and reuses one page for all fetchers', a
     'https://books.yandex.ru/search/all/Book%20One%20Author%20One',
     'https://www.litres.ru/',
     'https://www.litres.ru/search/?q=Book+One+Author+One',
+    'https://www.livelib.ru/book/100000',
   ]);
   assert.equal(result.wishlistPages.length, 1);
   assert.equal(
@@ -282,6 +287,96 @@ test('browser session opens one context and reuses one page for all fetchers', a
   assert.equal(
     result.litresPage.url,
     'https://www.litres.ru/search/?q=Book+One+Author+One',
+  );
+  assert.equal(result.bookPage.url, 'https://www.livelib.ru/book/100000');
+});
+
+test('browser mode opens LiveLib book page with persistent profile', async () => {
+  const calls = [];
+  let closed = false;
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url, options) {
+      currentUrl = url;
+      calls.push(['goto', url, options]);
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return '<html><body>book page</body></html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext(profileDir, options) {
+        calls.push(['launchPersistentContext', profileDir, options]);
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  const result = await fetchBookPageWithBrowser({
+    url: 'https://www.livelib.ru/book/100000-title?utm_source=list#reviews',
+    profileDir: '.browser-profile-test',
+    playwright: fakePlaywright,
+  });
+
+  assert.equal(result.url, 'https://www.livelib.ru/book/100000-title');
+  assert.equal(result.html, '<html><body>book page</body></html>');
+  assert.equal(calls[0][0], 'launchPersistentContext');
+  assert.match(calls[0][1], /\.browser-profile-test$/);
+  assert.deepEqual(calls[0][2], { headless: false });
+  assert.deepEqual(calls[1], [
+    'goto',
+    'https://www.livelib.ru/book/100000-title',
+    {
+      waitUntil: 'domcontentloaded',
+      timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
+    },
+  ]);
+  assert.equal(closed, true);
+});
+
+test('browser mode rejects non-book LiveLib page for book page fetcher', async () => {
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [
+              {
+                async goto() {},
+                url() {
+                  return 'about:blank';
+                },
+                async content() {
+                  return '';
+                },
+              },
+            ];
+          },
+          async close() {},
+        };
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => fetchBookPageWithBrowser({
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+      playwright: fakePlaywright,
+    }),
+    /Book page URL must be a LiveLib book or work URL/,
   );
 });
 

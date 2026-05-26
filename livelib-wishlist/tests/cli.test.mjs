@@ -121,6 +121,73 @@ test('main writes merged LiveLib updates back to the same output JSON', async (t
   ]);
 });
 
+test('main enriches LiveLib book page details before writing output JSON', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const htmlPath = join(directory, 'wish.html');
+  const outPath = join(directory, 'wishlist.json');
+  const calls = [];
+  const logs = [];
+  t.mock.method(console, 'log', (message) => {
+    logs.push(message);
+  });
+
+  await writeFile(
+    htmlPath,
+    `
+      <div class="brow-book">
+        <a class="brow-book-name" href="/book/100000">Book One</a>
+        <a class="brow-book-author" href="/author/1">Author One</a>
+      </div>
+    `,
+    'utf8',
+  );
+
+  const exitCode = await main(
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish',
+      '--html',
+      htmlPath,
+      '--out',
+      outPath,
+    ],
+    {
+      async bookPageFetcher({ url }) {
+        calls.push(url);
+        return {
+          url,
+          html: `
+            <meta property="og:description" content="Book One description">
+            <meta property="og:image" content="/covers/book-one.jpg">
+          `,
+        };
+      },
+      async bookPageSleep() {},
+    },
+  );
+  const saved = JSON.parse(await readFile(outPath, 'utf8'));
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(calls, ['https://www.livelib.ru/book/100000']);
+  assert.deepEqual(saved, [
+    {
+      title: 'Book One',
+      authors: ['Author One'],
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: [],
+      description: 'Book One description',
+      image: 'https://www.livelib.ru/covers/book-one.jpg',
+    },
+  ]);
+  assert.ok(logs.includes('Found LiveLib descriptions for 1 book(s)'));
+  assert.ok(logs.includes('Found LiveLib images for 1 book(s)'));
+  assert.ok(logs.includes('Enriched 1 book(s) with LiveLib descriptions'));
+  assert.ok(logs.includes('Enriched 1 book(s) with LiveLib images'));
+});
+
 test('main checks output JSON before loading LiveLib HTML fallback', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
   t.after(async () => {

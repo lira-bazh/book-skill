@@ -149,6 +149,16 @@ test('main enriches audiobook duration in the standard browser workflow', async 
               html: '<html><body>Длительность: 8 часов 35 минут</body></html>',
             };
           },
+          async fetchBookPage({ url }) {
+            calls.push(`book-page:${url}`);
+            return {
+              url,
+              html: `
+                <meta property="og:description" content="Сто лет одиночества description">
+                <meta property="og:image" content="/covers/100000.jpg">
+              `,
+            };
+          },
         });
       },
       async confirmLitresLogin() {
@@ -170,6 +180,9 @@ test('main enriches audiobook duration in the standard browser workflow', async 
     'confirm-litres',
     'litres',
     'audiobook:https://books.yandex.ru/audiobooks/RuLNt8od',
+    'book-page:https://www.livelib.ru/book/100000',
   ]);
   assert.equal(saved[0].audiobook_duration_minutes, 515);
+  assert.equal(saved[0].description, 'Сто лет одиночества description');
+  assert.equal(saved[0].image, 'https://www.livelib.ru/covers/100000.jpg');
 });

@@ -6,6 +6,7 @@ import {
   getWishlistPaginationPageNumber,
   isWishlistContentUrl,
   LiveLibAccessError,
+  normalizeBookUrl,
 } from './livelib.mjs';
 import { buildLitresSearchUrl } from './litres-books.mjs';
 import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
@@ -92,6 +93,16 @@ export async function fetchAudiobookPageWithBrowser({
   ));
 }
 
+export async function fetchBookPageWithBrowser({
+  url,
+  profileDir = DEFAULT_PROFILE_DIR,
+  playwright,
+}) {
+  return withBrowserSession({ profileDir, playwright }, ({ fetchBookPage }) => (
+    fetchBookPage({ url })
+  ));
+}
+
 async function fetchYandexBooksSearchPageWithPage(page, { query }) {
   const searchUrl = buildYandexBooksSearchUrl(query);
   await gotoWithRetry(page, searchUrl);
@@ -121,6 +132,19 @@ async function fetchAudiobookPageWithPage(page, { url }) {
   }
 
   await gotoWithRetry(page, url);
+  return {
+    url: page.url(),
+    html: await page.content(),
+  };
+}
+
+async function fetchBookPageWithPage(page, { url }) {
+  const normalizedUrl = normalizeBookUrl(url, 'https://www.livelib.ru/');
+  if (!normalizedUrl) {
+    throw new Error('Book page URL must be a LiveLib book or work URL');
+  }
+
+  await gotoWithRetry(page, normalizedUrl);
   return {
     url: page.url(),
     html: await page.content(),
@@ -242,6 +266,7 @@ export async function withBrowserSession({
       fetchYandexBooksSearchPage: (options) => fetchYandexBooksSearchPageWithPage(page, options),
       fetchLitresSearchPage: (options) => fetchLitresSearchPageWithPage(page, options),
       fetchAudiobookPage: (options) => fetchAudiobookPageWithPage(page, options),
+      fetchBookPage: (options) => fetchBookPageWithPage(page, options),
       openLitresHome: async () => {
         await gotoWithRetry(page, 'https://www.litres.ru/');
         return {
