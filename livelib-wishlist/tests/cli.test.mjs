@@ -896,9 +896,30 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
               url: 'https://www.litres.ru/search/?q=test',
               html: `
                 <article>
-                  <a href="/book/existing-author/existing-title-123/">Existing Title</a>
+                  <a href="/audiobook/existing-author/existing-title-123/">Existing Title</a>
                   <a href="/author/existing-author/">Existing Author</a>
                 </article>
+              `,
+            };
+          },
+          async fetchAudiobookPage({ url }) {
+            events.push(['details-audio', url]);
+            return {
+              url,
+              html: '<html><body>1 ч 20 мин</body></html>',
+            };
+          },
+          async fetchBookPage({ url }) {
+            events.push(['details-book', url]);
+            return {
+              url,
+              html: `
+                <html>
+                  <head>
+                    <meta property="og:description" content="Existing description">
+                    <meta property="og:image" content="/covers/existing.jpg">
+                  </head>
+                </html>
               `,
             };
           },
@@ -916,6 +937,8 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
       },
       async yandexSleep() {},
       async litresSleep() {},
+      async audiobookSleep() {},
+      async bookPageSleep() {},
     },
   );
 
@@ -929,6 +952,8 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
     ['litres-home'],
     ['litres-confirm'],
     ['litres'],
+    ['details-audio', 'https://www.litres.ru/audiobook/existing-author/existing-title-123'],
+    ['details-book', 'https://www.livelib.ru/book/100000'],
     ['json-write', outPath],
   ]);
   assert.deepEqual(savedBooks, [
@@ -938,7 +963,10 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
       url: 'https://www.livelib.ru/book/100000',
       keep: 'from-json',
       yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
-      litres_urls: ['https://www.litres.ru/book/existing-author/existing-title-123'],
+      litres_urls: ['https://www.litres.ru/audiobook/existing-author/existing-title-123'],
+      audiobook_duration_minutes: 80,
+      description: 'Existing description',
+      image: 'https://www.livelib.ru/covers/existing.jpg',
     },
   ]);
 });

@@ -3,10 +3,12 @@
 import { createInterface } from 'node:readline/promises';
 
 import {
-  enrichBooksWithAudiobookDuration,
   firstAudiobookUrlForBook,
   hasRecordedAudiobookDuration,
 } from './lib/audiobook-duration.mjs';
+import {
+  enrichBooksWithMissingDetails,
+} from './lib/book-details-enrichment.mjs';
 import {
   DEFAULT_MAX_PAGES,
   fetchYandexBooksSearchPageWithBrowser,
@@ -20,7 +22,6 @@ import {
   writeBooksJson,
 } from './lib/json-output.mjs';
 import {
-  enrichBooksWithBookPageDetails,
   extractBooksFromPages,
   hasRecordedBookPageDescription,
   hasRecordedBookPageImage,
@@ -258,53 +259,30 @@ export async function main(
       )).length;
     }
 
-    if (shouldEnrichAudiobookDuration) {
-      ranAudiobookDurationEnrichment = true;
-      const audiobookDurationBeforeEnrichment = new Map(
-        books.map((book) => [book.url, hasRecordedAudiobookDuration(book)]),
-      );
-      skippedAudiobookDuration = books.filter(hasRecordedAudiobookDuration).length;
-      books = await enrichBooksWithAudiobookDuration(books, {
-        fetchAudiobookPage,
-        pageDelayMs: FIXED_REQUEST_DELAY_MS,
-        onFetchError({ book, error }) {
+    if (shouldEnrichAudiobookDuration || shouldEnrichBookPageDetails) {
+      ranAudiobookDurationEnrichment = shouldEnrichAudiobookDuration;
+      ranBookPageDetailsEnrichment = shouldEnrichBookPageDetails;
+      const detailsResult = await enrichBooksWithMissingDetails(books, {
+        fetchAudiobookPage: shouldEnrichAudiobookDuration ? fetchAudiobookPage : undefined,
+        fetchBookPage: shouldEnrichBookPageDetails ? fetchBookPage : undefined,
+        onAudiobookFetchError({ book, error }) {
           console.error(`warning: skipped audiobook duration for "${book.title}": ${error.message}`);
         },
-        sleep: audiobookSleep,
-      });
-      enrichedAudiobookDuration = books.filter((book) => (
-        !audiobookDurationBeforeEnrichment.get(book.url) && hasRecordedAudiobookDuration(book)
-      )).length;
-    }
-
-    if (shouldEnrichBookPageDetails) {
-      ranBookPageDetailsEnrichment = true;
-      const bookPageDetailsBeforeEnrichment = new Map(
-        books.map((book) => [book.url, {
-          hasDescription: hasRecordedBookPageDescription(book),
-          hasImage: hasRecordedBookPageImage(book),
-        }]),
-      );
-      skippedBookPageDetails = books.filter((book) => {
-        const state = bookPageDetailsBeforeEnrichment.get(book.url);
-        return state?.hasDescription && state?.hasImage;
-      }).length;
-      books = await enrichBooksWithBookPageDetails(books, {
-        fetchBookPage,
-        pageDelayMs: FIXED_REQUEST_DELAY_MS,
-        onFetchError({ book, error }) {
+        onBookPageFetchError({ book, error }) {
           console.error(`warning: skipped LiveLib book page details for "${book.title}": ${error.message}`);
         },
-        sleep: bookPageSleep,
+        pageDelayMs: FIXED_REQUEST_DELAY_MS,
+        sleep: {
+          audiobook: audiobookSleep,
+          bookPage: bookPageSleep,
+        },
       });
-      enrichedBookDescriptions = books.filter((book) => {
-        const state = bookPageDetailsBeforeEnrichment.get(book.url);
-        return !state?.hasDescription && hasRecordedBookPageDescription(book);
-      }).length;
-      enrichedBookImages = books.filter((book) => {
-        const state = bookPageDetailsBeforeEnrichment.get(book.url);
-        return !state?.hasImage && hasRecordedBookPageImage(book);
-      }).length;
+      books = detailsResult.books;
+      skippedAudiobookDuration = detailsResult.stats.skippedAudiobookDuration;
+      enrichedAudiobookDuration = detailsResult.stats.enrichedAudiobookDuration;
+      skippedBookPageDetails = detailsResult.stats.skippedBookPageDetails;
+      enrichedBookDescriptions = detailsResult.stats.enrichedBookDescriptions;
+      enrichedBookImages = detailsResult.stats.enrichedBookImages;
     }
 
     outputPath = await writeBooksJsonFn(args.out, books);
