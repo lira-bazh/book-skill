@@ -10,6 +10,8 @@ import {
 const LITRES_ITEM_PATH_RE = /^\/(?:book|audiobook)\/[^/]+(?:\/[^/]+)*$/;
 const NON_TITLE_TEXT_RE = /^(?:купить|читать|слушать|скачать|подробнее|в корзину|фрагмент|слушать фрагмент|читать онлайн|отложить|оценить|\d+(?:[.,]\d+)?\s*(?:₽|руб\.?|р\.?))$/i;
 const TITLE_FORMAT_NOTE_RE = /\s*\((?:сборник)\)\s*/giu;
+const AUTHOR_ET_AL_RE = /(?:^|[\s,;])и\s+др\.?$/iu;
+const AUTHOR_SEPARATOR_RE = /\s*(?:[,;]|\s+[&+]\s+)\s*/u;
 
 function normalizeLitresTitleForMatch(title) {
   return normalizeForMatch(cleanText(title).replace(TITLE_FORMAT_NOTE_RE, ' '));
@@ -32,19 +34,27 @@ export function isSimilarLitresTitle(sourceTitle, candidateTitle) {
 }
 
 export function isSimilarLitresAuthor(sourceAuthor, candidateAuthor) {
-  const source = normalizeForMatch(sourceAuthor);
-  const candidate = normalizeForMatch(candidateAuthor);
+  const sourceVariants = normalizeLitresAuthorVariants(sourceAuthor);
+  const candidateVariants = normalizeLitresAuthorVariants(candidateAuthor);
 
-  if (!source || !candidate) {
-    return false;
-  }
+  return sourceVariants.some((source) => (
+    candidateVariants.some((candidate) => (
+      source === candidate ||
+      candidate.includes(source) ||
+      source.includes(candidate) ||
+      hasTokenOverlap(source, candidate, 0.66)
+    ))
+  ));
+}
 
-  return (
-    source === candidate ||
-    candidate.includes(source) ||
-    source.includes(candidate) ||
-    hasTokenOverlap(source, candidate, 0.66)
-  );
+function normalizeLitresAuthorVariants(author) {
+  const cleanedAuthor = cleanText(author).replace(AUTHOR_ET_AL_RE, '');
+  const variants = [cleanedAuthor, ...cleanedAuthor.split(AUTHOR_SEPARATOR_RE)];
+
+  return variants
+    .map((variant) => normalizeForMatch(variant))
+    .filter(Boolean)
+    .filter((variant, index, values) => values.indexOf(variant) === index);
 }
 
 export function buildLitresSearchQuery(book) {

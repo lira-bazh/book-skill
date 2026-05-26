@@ -210,6 +210,24 @@ test('matches Litres result when source title has collection format note', () =>
   );
 });
 
+test('matches Litres result when candidate author is shortened with et al marker', () => {
+  const book = {
+    title: 'Как говорить, чтобы дети слушали, и как слушать, чтобы дети говорили',
+    authors: ['Адель Фабер, Элейн Мазлиш'],
+  };
+
+  assert.equal(
+    isLitresResultSimilarToBook(
+      {
+        title: 'Как говорить, чтобы дети слушали, и как слушать, чтобы дети говорили',
+        authors: ['Элейн Мазлиш и др.'],
+      },
+      book,
+    ),
+    true,
+  );
+});
+
 test('filters matching Litres URLs for a source book', () => {
   const book = {
     title: 'Сто лет одиночества',
