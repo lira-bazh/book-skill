@@ -5,8 +5,8 @@ import { createInterface } from 'node:readline/promises';
 import {
   DEFAULT_MAX_PAGES,
   DEFAULT_PROFILE_DIR,
-  fetchWishlistPagesWithBrowser,
   fetchYandexBooksSearchPageWithBrowser,
+  withBrowserSession,
   withLitresSearchBrowserSession,
 } from './lib/browser.mjs';
 import {
@@ -113,7 +113,11 @@ export async function main(
     litresSearchPageFetcher,
     litresSleep,
     confirmLitresLogin = waitForLitresLoginConfirmation,
+    browserSessionRunner = withBrowserSession,
     withLitresSearchSession = withLitresSearchBrowserSession,
+    booksJsonExistsFn = booksJsonExists,
+    loadBooksJsonIfExistsFn = loadBooksJsonIfExists,
+    writeBooksJsonFn = writeBooksJson,
   } = {},
 ) {
   const args = parseArgs(argv);
@@ -138,9 +142,9 @@ export async function main(
   let outputJsonExists;
   let existingBooks = [];
   try {
-    outputJsonExists = await booksJsonExists(args.out);
+    outputJsonExists = await booksJsonExistsFn(args.out);
     if (outputJsonExists) {
-      existingBooks = await loadBooksJsonIfExists(args.out);
+      existingBooks = await loadBooksJsonIfExistsFn(args.out);
     }
   } catch (error) {
     console.error(`error: ${error.message}`);
@@ -148,36 +152,23 @@ export async function main(
   }
 
   let fetchedPages;
-  try {
-    if (args.html) {
-      const savedPage = await loadHtmlFile(args.html);
-      fetchedPages = [{ url: wishlistUrl.url, html: savedPage.html }];
-    } else if (args.browser) {
-      fetchedPages = await fetchWishlistPagesWithBrowser({
-        wishlistUrl,
-        maxPages: args.maxPages,
-        pageDelayMs: FIXED_REQUEST_DELAY_MS,
-        profileDir: args.profileDir,
-      });
-    } else {
-      throw new Error('Use --browser for the main workflow, or --html for a saved HTML fallback.');
-    }
-  } catch (error) {
-    console.error(`error: ${error.message}`);
-    return 2;
-  }
-
-  const livelibBooks = extractBooksFromPages(fetchedPages);
-  const livelibMatch = matchBooksByLiveLibUrl(livelibBooks, existingBooks);
-  let books = mergeExistingLiveLibBooks(livelibBooks, existingBooks);
-  const shouldEnrichYandexBooks = args.browser || typeof yandexSearchPageFetcher === 'function';
-  const shouldEnrichLitres = args.browser || typeof litresSearchPageFetcher === 'function';
+  let livelibBooks;
+  let livelibMatch;
+  let books;
   let skippedYandexBooks = 0;
   let enrichedYandexBooks = 0;
   let skippedLitres = 0;
   let enrichedLitres = 0;
   let outputPath;
-  try {
+
+  const finishWorkflow = async ({ nextFetchedPages, browserSession = null }) => {
+    fetchedPages = nextFetchedPages;
+    livelibBooks = extractBooksFromPages(fetchedPages);
+    livelibMatch = matchBooksByLiveLibUrl(livelibBooks, existingBooks);
+    books = mergeExistingLiveLibBooks(livelibBooks, existingBooks);
+    const shouldEnrichYandexBooks = args.browser || typeof yandexSearchPageFetcher === 'function';
+    const shouldEnrichLitres = args.browser || typeof litresSearchPageFetcher === 'function';
+
     if (shouldEnrichYandexBooks) {
       const yandexUrlsBeforeEnrichment = new Map(
         books.map((book) => [book.url, hasYandexBooksUrls(book)]),
@@ -185,7 +176,9 @@ export async function main(
       skippedYandexBooks = countBooksWithExistingYandexBooksUrls(books, books);
       books = await enrichBooksWithYandexBooksUrls(books, {
         existingBooks: books,
-        fetchSearchPage: yandexSearchPageFetcher ?? fetchYandexBooksSearchPageWithBrowser,
+        fetchSearchPage: yandexSearchPageFetcher
+          ?? browserSession?.fetchYandexBooksSearchPage
+          ?? fetchYandexBooksSearchPageWithBrowser,
         profileDir: args.profileDir,
         maxResults: args.maxResults,
         delayMs: FIXED_REQUEST_DELAY_MS,
@@ -221,6 +214,12 @@ export async function main(
 
       if (litresSearchPageFetcher) {
         await enrichWithLitres(litresSearchPageFetcher);
+      } else if (browserSession) {
+        await browserSession.openLitresHome();
+        await confirmLitresLogin({
+          pageUrl: browserSession.page.url(),
+        });
+        await enrichWithLitres(browserSession.fetchLitresSearchPage);
       } else {
         await withLitresSearchSession({
           profileDir: args.profileDir,
@@ -235,11 +234,33 @@ export async function main(
       )).length;
     }
 
-    outputPath = await writeBooksJson(args.out, books);
+    outputPath = await writeBooksJsonFn(args.out, books);
+  };
+
+  try {
+    if (args.html) {
+      const savedPage = await loadHtmlFile(args.html);
+      await finishWorkflow({
+        nextFetchedPages: [{ url: wishlistUrl.url, html: savedPage.html }],
+      });
+    } else if (args.browser) {
+      await browserSessionRunner({ profileDir: args.profileDir }, async (browserSession) => {
+        const nextFetchedPages = await browserSession.fetchWishlistPages({
+          wishlistUrl,
+          maxPages: args.maxPages,
+          pageDelayMs: FIXED_REQUEST_DELAY_MS,
+        });
+        await finishWorkflow({ nextFetchedPages, browserSession });
+      });
+    } else {
+      throw new Error('Use --browser for the main workflow, or --html for a saved HTML fallback.');
+    }
   } catch (error) {
     console.error(`error: ${error.message}`);
     return 2;
   }
+  const shouldEnrichYandexBooks = args.browser || typeof yandexSearchPageFetcher === 'function';
+  const shouldEnrichLitres = args.browser || typeof litresSearchPageFetcher === 'function';
 
   console.log(`Accepted LiveLib wish-list URL for user ${wishlistUrl.username}: ${wishlistUrl.url}`);
   console.log(`Loaded ${fetchedPages.length} HTML page(s)`);

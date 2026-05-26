@@ -656,3 +656,224 @@ test('main saves matching Litres URLs with injected fetcher', async (t) => {
   assert.ok(logs.includes('Skipped 0 book(s) with existing Litres links'));
   assert.ok(logs.includes('Enriched 1 book(s) with new Litres links'));
 });
+
+test('main browser workflow uses one shared browser session', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const outPath = join(directory, 'wishlist.json');
+  const events = [];
+  t.mock.method(console, 'log', () => {});
+
+  const exitCode = await main(
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish',
+      '--browser',
+      '--out',
+      outPath,
+    ],
+    {
+      async browserSessionRunner(options, callback) {
+        events.push(['session', options.profileDir]);
+        const session = {
+          page: {
+            url() {
+              return 'https://www.litres.ru/';
+            },
+          },
+          async fetchWishlistPages({ wishlistUrl }) {
+            events.push(['wishlist', wishlistUrl.url]);
+            return [{
+              url: wishlistUrl.url,
+              html: `
+                <div class="brow-book">
+                  <a class="brow-book-name" href="/book/100000">Сто лет одиночества</a>
+                  <a class="brow-book-author" href="/author/1">Габриэль Гарсиа Маркес</a>
+                </div>
+              `,
+            }];
+          },
+          async fetchYandexBooksSearchPage() {
+            events.push(['yandex']);
+            return {
+              url: 'https://books.yandex.ru/search/all/test',
+              html: `
+                <div data-test-id="SNIPPET">
+                  <a href="/books/RuLNt8od">Сто лет одиночества</a>
+                  <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Габриэль Гарсиа Маркес</a>
+                </div>
+              `,
+            };
+          },
+          async openLitresHome() {
+            events.push(['litres-home']);
+          },
+          async fetchLitresSearchPage() {
+            events.push(['litres-search']);
+            return {
+              url: 'https://www.litres.ru/search/?q=test',
+              html: `
+                <article>
+                  <a href="/book/gabriel-garsia-markes/sto-let-odinochestva-123/">Сто лет одиночества</a>
+                  <a href="/author/gabriel-garsia-markes/">Габриэль Гарсиа Маркес</a>
+                </article>
+              `,
+            };
+          },
+        };
+
+        return callback(session);
+      },
+      async confirmLitresLogin() {
+        events.push(['litres-confirm']);
+      },
+      async yandexSleep() {},
+      async litresSleep() {},
+    },
+  );
+  const saved = JSON.parse(await readFile(outPath, 'utf8'));
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(events, [
+    ['session', undefined],
+    ['wishlist', 'https://www.livelib.ru/reader/LiraLantan/wish'],
+    ['yandex'],
+    ['litres-home'],
+    ['litres-confirm'],
+    ['litres-search'],
+  ]);
+  assert.deepEqual(saved, [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
+      litres_urls: ['https://www.litres.ru/book/gabriel-garsia-markes/sto-let-odinochestva-123'],
+    },
+  ]);
+});
+
+test('main browser workflow keeps JSON read, session work, and JSON write order', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const outPath = join(directory, 'wishlist.json');
+  const outputPath = resolve(outPath);
+  const events = [];
+  let savedBooks;
+  t.mock.method(console, 'log', () => {});
+
+  const exitCode = await main(
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish',
+      '--browser',
+      '--out',
+      outPath,
+    ],
+    {
+      async booksJsonExistsFn(path) {
+        events.push(['json-exists', path]);
+        return true;
+      },
+      async loadBooksJsonIfExistsFn(path) {
+        events.push(['json-read', path]);
+        return [{
+          title: 'Existing Title',
+          authors: ['Existing Author'],
+          url: 'https://www.livelib.ru/book/100000',
+          keep: 'from-json',
+          yandex_books_urls: [],
+          litres_urls: [],
+        }];
+      },
+      async browserSessionRunner(options, callback) {
+        events.push(['session-open', options.profileDir]);
+        const session = {
+          page: {
+            url() {
+              return 'https://www.litres.ru/';
+            },
+          },
+          async fetchWishlistPages({ wishlistUrl }) {
+            events.push(['livelib', wishlistUrl.url]);
+            return [{
+              url: wishlistUrl.url,
+              html: `
+                <div class="brow-book">
+                  <a class="brow-book-name" href="/book/100000">LiveLib Title</a>
+                  <a class="brow-book-author" href="/author/1">LiveLib Author</a>
+                </div>
+              `,
+            }];
+          },
+          async fetchYandexBooksSearchPage() {
+            events.push(['yandex']);
+            return {
+              url: 'https://books.yandex.ru/search/all/test',
+              html: `
+                <div data-test-id="SNIPPET">
+                  <a href="/books/RuLNt8od">Existing Title</a>
+                  <a data-test-id="SNIPPET_AUTHORS" href="/authors/mtCiHlg1">Existing Author</a>
+                </div>
+              `,
+            };
+          },
+          async openLitresHome() {
+            events.push(['litres-home']);
+          },
+          async fetchLitresSearchPage() {
+            events.push(['litres']);
+            return {
+              url: 'https://www.litres.ru/search/?q=test',
+              html: `
+                <article>
+                  <a href="/book/existing-author/existing-title-123/">Existing Title</a>
+                  <a href="/author/existing-author/">Existing Author</a>
+                </article>
+              `,
+            };
+          },
+        };
+
+        return callback(session);
+      },
+      async confirmLitresLogin() {
+        events.push(['litres-confirm']);
+      },
+      async writeBooksJsonFn(path, books) {
+        events.push(['json-write', path]);
+        savedBooks = books;
+        return outputPath;
+      },
+      async yandexSleep() {},
+      async litresSleep() {},
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(events, [
+    ['json-exists', outPath],
+    ['json-read', outPath],
+    ['session-open', undefined],
+    ['livelib', 'https://www.livelib.ru/reader/LiraLantan/wish'],
+    ['yandex'],
+    ['litres-home'],
+    ['litres-confirm'],
+    ['litres'],
+    ['json-write', outPath],
+  ]);
+  assert.deepEqual(savedBooks, [
+    {
+      title: 'Existing Title',
+      authors: ['Existing Author'],
+      url: 'https://www.livelib.ru/book/100000',
+      keep: 'from-json',
+      yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
+      litres_urls: ['https://www.litres.ru/book/existing-author/existing-title-123'],
+    },
+  ]);
+});

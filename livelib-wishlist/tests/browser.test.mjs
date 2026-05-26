@@ -10,6 +10,7 @@ import {
   fetchWishlistPagesWithBrowser,
   fetchYandexBooksSearchPageWithBrowser,
   resolveProfileDir,
+  withBrowserSession,
   withLitresSearchBrowserSession,
 } from '../scripts/lib/browser.mjs';
 import { LiveLibAccessError } from '../scripts/lib/livelib.mjs';
@@ -135,6 +136,12 @@ test('browser mode opens Litres search page with persistent profile', async () =
       currentUrl = url;
       calls.push(['goto', url, options]);
     },
+    async waitForLoadState(state, options) {
+      calls.push(['waitForLoadState', state, options]);
+    },
+    async waitForFunction(callback, arg, options) {
+      calls.push(['waitForFunction', typeof callback, arg, options]);
+    },
     url() {
       return currentUrl;
     },
@@ -189,6 +196,132 @@ test('browser mode opens Litres search page with persistent profile', async () =
   assert.equal(openedUrl.origin, 'https://www.litres.ru');
   assert.equal(openedUrl.pathname, '/search/');
   assert.equal(openedUrl.searchParams.get('q'), 'Сто лет одиночества Маркес');
+  assert.equal(closed, true);
+});
+
+test('browser session opens one context and reuses one page for all fetchers', async () => {
+  const visited = [];
+  let launchCount = 0;
+  let newPageCount = 0;
+  let closed = false;
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url) {
+      currentUrl = url;
+      visited.push(url);
+    },
+    async waitForLoadState() {},
+    async waitForFunction() {},
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      if (currentUrl === 'https://www.livelib.ru/reader/LiraLantan/wish') {
+        return '<a class="brow-book-name" href="/book/100000">Book One</a>';
+      }
+      return `<html><body>${currentUrl}</body></html>`;
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        launchCount += 1;
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async newPage() {
+            newPageCount += 1;
+            return fakePage;
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  const result = await withBrowserSession({ playwright: fakePlaywright }, async (session) => {
+    assert.equal(session.page, fakePage);
+
+    const wishlistPages = await session.fetchWishlistPages({
+      wishlistUrl: {
+        username: 'LiraLantan',
+        url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+      },
+      maxPages: 1,
+    });
+    const yandexPage = await session.fetchYandexBooksSearchPage({
+      query: 'Book One Author One',
+    });
+    await session.openLitresHome();
+    const litresPage = await session.fetchLitresSearchPage({
+      query: 'Book One Author One',
+    });
+
+    return { wishlistPages, yandexPage, litresPage };
+  });
+
+  assert.equal(launchCount, 1);
+  assert.equal(newPageCount, 0);
+  assert.equal(closed, true);
+  assert.deepEqual(visited, [
+    'https://www.livelib.ru/reader/LiraLantan/wish',
+    'https://books.yandex.ru/search/all/Book%20One%20Author%20One',
+    'https://www.litres.ru/',
+    'https://www.litres.ru/search/?q=Book+One+Author+One',
+  ]);
+  assert.equal(result.wishlistPages.length, 1);
+  assert.equal(
+    result.yandexPage.url,
+    'https://books.yandex.ru/search/all/Book%20One%20Author%20One',
+  );
+  assert.equal(
+    result.litresPage.url,
+    'https://www.litres.ru/search/?q=Book+One+Author+One',
+  );
+});
+
+test('browser session closes context when a fetcher throws', async () => {
+  let closed = false;
+  const fakePage = {
+    async goto() {
+      throw new Error('search failed');
+    },
+    url() {
+      return 'about:blank';
+    },
+    async content() {
+      return '';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  await assert.rejects(
+    () => withBrowserSession({ playwright: fakePlaywright }, async (session) => {
+      await session.fetchYandexBooksSearchPage({
+        query: 'Book One Author One',
+      });
+    }),
+    /search failed/,
+  );
   assert.equal(closed, true);
 });
 

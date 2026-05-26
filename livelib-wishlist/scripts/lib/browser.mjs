@@ -65,23 +65,9 @@ export async function fetchYandexBooksSearchPageWithBrowser({
   profileDir = DEFAULT_PROFILE_DIR,
   playwright,
 }) {
-  const searchUrl = buildYandexBooksSearchUrl(query);
-  const playwrightApi = playwright ?? await import('playwright');
-  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
-    headless: false,
-  });
-
-  try {
-    const page = context.pages()[0] ?? await context.newPage();
-    await gotoWithRetry(page, searchUrl);
-    return {
-      query: cleanText(query),
-      url: page.url(),
-      html: await page.content(),
-    };
-  } finally {
-    await context.close();
-  }
+  return withBrowserSession({ profileDir, playwright }, ({ fetchYandexBooksSearchPage }) => (
+    fetchYandexBooksSearchPage({ query })
+  ));
 }
 
 export async function fetchLitresSearchPageWithBrowser({
@@ -90,22 +76,19 @@ export async function fetchLitresSearchPageWithBrowser({
   profileDir = DEFAULT_PROFILE_DIR,
   playwright,
 }) {
-  const normalizedQuery = cleanText(query);
-  const targetUrl = searchUrl ?? buildLitresSearchUrl(normalizedQuery);
-  const playwrightApi = playwright ?? await import('playwright');
-  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
-    headless: false,
-  });
+  return withBrowserSession({ profileDir, playwright }, ({ fetchLitresSearchPage }) => (
+    fetchLitresSearchPage({ query, searchUrl })
+  ));
+}
 
-  try {
-    const page = context.pages()[0] ?? await context.newPage();
-    return await fetchLitresSearchPageWithPage(page, {
-      query: normalizedQuery,
-      searchUrl: targetUrl,
-    });
-  } finally {
-    await context.close();
-  }
+async function fetchYandexBooksSearchPageWithPage(page, { query }) {
+  const searchUrl = buildYandexBooksSearchUrl(query);
+  await gotoWithRetry(page, searchUrl);
+  return {
+    query: cleanText(query),
+    url: page.url(),
+    html: await page.content(),
+  };
 }
 
 async function fetchLitresSearchPageWithPage(page, { query, searchUrl }) {
@@ -158,6 +141,71 @@ export async function withLitresSearchBrowserSession({
     throw new Error('Litres browser session callback is required');
   }
 
+  return withBrowserSession({ profileDir, playwright }, async (session) => {
+    await session.openLitresHome();
+    if (typeof onBeforeSearch === 'function') {
+      await onBeforeSearch({
+        pageUrl: session.page.url(),
+      });
+    }
+
+    return callback({
+      fetchSearchPage: session.fetchLitresSearchPage,
+    });
+  });
+}
+
+async function fetchWishlistPagesWithPage(page, {
+  wishlistUrl,
+  maxPages = DEFAULT_MAX_PAGES,
+  pageDelayMs = 0,
+}) {
+  if (maxPages < 1) {
+    throw new Error('maxPages must be greater than zero');
+  }
+
+  const pending = [wishlistUrl.url];
+  const queued = new Set(pending);
+  const queuedPageNumbers = new Set();
+  const fetchedPages = [];
+
+  while (pending.length > 0 && fetchedPages.length < maxPages) {
+    const url = pending.shift();
+    await gotoWithRetry(page, url);
+
+    const html = await page.content();
+    const finalUrl = page.url();
+    if (!isWishlistContentUrl(finalUrl, wishlistUrl.username, wishlistUrl.url)) {
+      throw new LiveLibAccessError(`LiveLib opened an unexpected page instead of the wish-list: ${finalUrl}`);
+    }
+
+    fetchedPages.push({ url: finalUrl, html });
+
+    for (const pageUrl of extractWishlistPageUrls(html, wishlistUrl.username, finalUrl)) {
+      const pageNumber = getWishlistPaginationPageNumber(pageUrl, wishlistUrl.username);
+      if (!queued.has(pageUrl) && !queuedPageNumbers.has(pageNumber)) {
+        queued.add(pageUrl);
+        queuedPageNumbers.add(pageNumber);
+        pending.push(pageUrl);
+      }
+    }
+
+    if (pending.length > 0 && pageDelayMs > 0) {
+      await sleep(pageDelayMs);
+    }
+  }
+
+  return fetchedPages;
+}
+
+export async function withBrowserSession({
+  profileDir = DEFAULT_PROFILE_DIR,
+  playwright,
+} = {}, callback) {
+  if (typeof callback !== 'function') {
+    throw new Error('Browser session callback is required');
+  }
+
   const playwrightApi = playwright ?? await import('playwright');
   const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
     headless: false,
@@ -165,17 +213,18 @@ export async function withLitresSearchBrowserSession({
 
   try {
     const page = context.pages()[0] ?? await context.newPage();
-    await gotoWithRetry(page, 'https://www.litres.ru/');
-    if (typeof onBeforeSearch === 'function') {
-      await onBeforeSearch({
-        pageUrl: page.url(),
-      });
-    }
-
     return await callback({
-      fetchSearchPage: ({ query, searchUrl }) => (
-        fetchLitresSearchPageWithPage(page, { query, searchUrl })
-      ),
+      page,
+      fetchWishlistPages: (options) => fetchWishlistPagesWithPage(page, options),
+      fetchYandexBooksSearchPage: (options) => fetchYandexBooksSearchPageWithPage(page, options),
+      fetchLitresSearchPage: (options) => fetchLitresSearchPageWithPage(page, options),
+      openLitresHome: async () => {
+        await gotoWithRetry(page, 'https://www.litres.ru/');
+        return {
+          url: page.url(),
+          html: await page.content(),
+        };
+      },
     });
   } finally {
     await context.close();
@@ -189,50 +238,7 @@ export async function fetchWishlistPagesWithBrowser({
   playwright,
   pageDelayMs = 0,
 }) {
-  if (maxPages < 1) {
-    throw new Error('maxPages must be greater than zero');
-  }
-
-  const playwrightApi = playwright ?? await import('playwright');
-  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
-    headless: false,
-  });
-
-  try {
-    const page = context.pages()[0] ?? await context.newPage();
-    const pending = [wishlistUrl.url];
-    const queued = new Set(pending);
-    const queuedPageNumbers = new Set();
-    const fetchedPages = [];
-
-    while (pending.length > 0 && fetchedPages.length < maxPages) {
-      const url = pending.shift();
-      await gotoWithRetry(page, url);
-
-      const html = await page.content();
-      const finalUrl = page.url();
-      if (!isWishlistContentUrl(finalUrl, wishlistUrl.username, wishlistUrl.url)) {
-        throw new LiveLibAccessError(`LiveLib opened an unexpected page instead of the wish-list: ${finalUrl}`);
-      }
-
-      fetchedPages.push({ url: finalUrl, html });
-
-      for (const pageUrl of extractWishlistPageUrls(html, wishlistUrl.username, finalUrl)) {
-        const pageNumber = getWishlistPaginationPageNumber(pageUrl, wishlistUrl.username);
-        if (!queued.has(pageUrl) && !queuedPageNumbers.has(pageNumber)) {
-          queued.add(pageUrl);
-          queuedPageNumbers.add(pageNumber);
-          pending.push(pageUrl);
-        }
-      }
-
-      if (pending.length > 0 && pageDelayMs > 0) {
-        await sleep(pageDelayMs);
-      }
-    }
-
-    return fetchedPages;
-  } finally {
-    await context.close();
-  }
+  return withBrowserSession({ profileDir, playwright }, ({ fetchWishlistPages }) => (
+    fetchWishlistPages({ wishlistUrl, maxPages, pageDelayMs })
+  ));
 }

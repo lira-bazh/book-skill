@@ -122,32 +122,32 @@ persistent context и одном видимом окне.
 
 Цель рефакторинга:
 
-1. [ ] Убрать последовательное открытие нескольких Chromium context для LiveLib, Яндекс Книг и Литрес.
-2. [ ] Создать единый browser session на весь основной workflow `--browser`.
-3. [ ] Использовать один persistent profile `--profile-dir` и один видимый browser context для всех доменов.
-4. [ ] Переиспользовать одну страницу `page` для LiveLib-пагинации, поиска Яндекс Книг, ручного логина Литрес и поиска Литрес.
-5. [ ] Сохранить ручной логин Литрес: открыть Литрес в том же окне, дождаться подтверждения пользователя и продолжить в этой же сессии.
-6. [ ] Сохранить текущую инкрементальную логику: существующий JSON читается до открытия браузера, а сетевые запросы выполняются только для незаполненных полей.
-7. [ ] Сохранить фиксированные задержки 2000 мс между переходами, не добавляя параллельных запросов к одной странице.
-8. [ ] Гарантировать закрытие browser context в `finally` при успехе, ошибке парсинга, ошибке поиска или остановке из-за защитной страницы.
-9. [ ] Оставить unit-тесты быстрыми: тесты не должны открывать реальный браузер, только fake Playwright/session.
-10. [ ] Не менять публичный CLI-контракт без необходимости: `--browser`, `--profile-dir`, `--max-pages`, `--max-results` должны продолжить работать.
+1. [x] Убрать последовательное открытие нескольких Chromium context для LiveLib, Яндекс Книг и Литрес.
+2. [x] Создать единый browser session на весь основной workflow `--browser`.
+3. [x] Использовать один persistent profile `--profile-dir` и один видимый browser context для всех доменов.
+4. [x] Переиспользовать одну страницу `page` для LiveLib-пагинации, поиска Яндекс Книг, ручного логина Литрес и поиска Литрес.
+5. [x] Сохранить ручной логин Литрес: открыть Литрес в том же окне, дождаться подтверждения пользователя и продолжить в этой же сессии.
+6. [x] Сохранить текущую инкрементальную логику: существующий JSON читается до открытия браузера, а сетевые запросы выполняются только для незаполненных полей.
+7. [x] Сохранить фиксированные задержки 2000 мс между переходами, не добавляя параллельных запросов к одной странице.
+8. [x] Гарантировать закрытие browser context в `finally` при успехе, ошибке парсинга, ошибке поиска или остановке из-за защитной страницы.
+9. [x] Оставить unit-тесты быстрыми: тесты не должны открывать реальный браузер, только fake Playwright/session.
+10. [x] Не менять публичный CLI-контракт без необходимости: `--browser`, `--profile-dir`, `--max-pages`, `--max-results` должны продолжить работать.
 
 Технический план:
 
-1. [ ] В `scripts/lib/browser.mjs` добавить session API, например `withBrowserSession({ profileDir, playwright }, callback)`.
-2. [ ] Внутри session API один раз вызвать `chromium.launchPersistentContext(resolveProfileDir(profileDir), { headless: false })`.
-3. [ ] В session API создать или взять первую страницу `context.pages()[0] ?? await context.newPage()`.
-4. [ ] Вернуть в callback набор методов поверх этой страницы: `fetchWishlistPages`, `fetchYandexBooksSearchPage`, `fetchLitresSearchPage`, при необходимости `openLitresHome`.
-5. [ ] Перенести общую навигацию через существующий `gotoWithRetry`, чтобы retry и timeout оставались едиными для всех доменов.
-6. [ ] Адаптировать `fetchWishlistPagesWithBrowser`, `fetchYandexBooksSearchPageWithBrowser` и `withLitresSearchBrowserSession` так, чтобы они могли работать через уже открытую session/page.
-7. [ ] Сохранить старые standalone fetcher-функции как совместимые обертки, которые сами создают session и закрывают ее после одного действия.
-8. [ ] В `scripts/livelib-wish-to-json.mjs` в ветке `args.browser` обернуть весь основной workflow в `withBrowserSession`.
-9. [ ] Передать session-fetcher для LiveLib, Яндекс Книг и Литрес в существующие enrichment-функции вместо standalone browser fetcher.
-10. [ ] Выполнять подтверждение ручного логина Литрес после открытия Литрес в той же session, не создавая новый context.
-11. [ ] Обновить browser-тесты: проверить, что основной browser workflow вызывает `launchPersistentContext` один раз за запуск и переиспользует одну страницу.
-12. [ ] Обновить CLI-тесты моками session API, чтобы зафиксировать порядок: чтение JSON, открытие session, LiveLib, Яндекс Книги, Литрес, запись JSON.
-13. [ ] Добавить регрессионный тест на закрытие context при ошибке одного из enrichment-этапов.
+1. [x] В `scripts/lib/browser.mjs` добавить session API, например `withBrowserSession({ profileDir, playwright }, callback)`.
+2. [x] Внутри session API один раз вызвать `chromium.launchPersistentContext(resolveProfileDir(profileDir), { headless: false })`.
+3. [x] В session API создать или взять первую страницу `context.pages()[0] ?? await context.newPage()`.
+4. [x] Вернуть в callback набор методов поверх этой страницы: `fetchWishlistPages`, `fetchYandexBooksSearchPage`, `fetchLitresSearchPage`, при необходимости `openLitresHome`.
+5. [x] Перенести общую навигацию через существующий `gotoWithRetry`, чтобы retry и timeout оставались едиными для всех доменов.
+6. [x] Адаптировать `fetchWishlistPagesWithBrowser`, `fetchYandexBooksSearchPageWithBrowser` и `withLitresSearchBrowserSession` так, чтобы они могли работать через уже открытую session/page.
+7. [x] Сохранить старые standalone fetcher-функции как совместимые обертки, которые сами создают session и закрывают ее после одного действия.
+8. [x] В `scripts/livelib-wish-to-json.mjs` в ветке `args.browser` обернуть весь основной workflow в `withBrowserSession`.
+9. [x] Передать session-fetcher для LiveLib, Яндекс Книг и Литрес в существующие enrichment-функции вместо standalone browser fetcher.
+10. [x] Выполнять подтверждение ручного логина Литрес после открытия Литрес в той же session, не создавая новый context.
+11. [x] Обновить browser-тесты: проверить, что основной browser workflow вызывает `launchPersistentContext` один раз за запуск и переиспользует одну страницу.
+12. [x] Обновить CLI-тесты моками session API, чтобы зафиксировать порядок: чтение JSON, открытие session, LiveLib, Яндекс Книги, Литрес, запись JSON.
+13. [x] Добавить регрессионный тест на закрытие context при ошибке одного из enrichment-этапов.
 
 Ожидаемый результат:
 
