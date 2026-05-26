@@ -7,6 +7,7 @@ import {
   isWishlistContentUrl,
   LiveLibAccessError,
 } from './livelib.mjs';
+import { buildLitresSearchUrl } from './litres-books.mjs';
 import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
 import { cleanText } from './text-match.mjs';
 
@@ -77,6 +78,75 @@ export async function fetchYandexBooksSearchPageWithBrowser({
       url: page.url(),
       html: await page.content(),
     };
+  } finally {
+    await context.close();
+  }
+}
+
+export async function fetchLitresSearchPageWithBrowser({
+  query,
+  searchUrl,
+  profileDir = DEFAULT_PROFILE_DIR,
+  playwright,
+}) {
+  const normalizedQuery = cleanText(query);
+  const targetUrl = searchUrl ?? buildLitresSearchUrl(normalizedQuery);
+  const playwrightApi = playwright ?? await import('playwright');
+  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
+    headless: false,
+  });
+
+  try {
+    const page = context.pages()[0] ?? await context.newPage();
+    return await fetchLitresSearchPageWithPage(page, {
+      query: normalizedQuery,
+      searchUrl: targetUrl,
+    });
+  } finally {
+    await context.close();
+  }
+}
+
+async function fetchLitresSearchPageWithPage(page, { query, searchUrl }) {
+  const normalizedQuery = cleanText(query);
+  const targetUrl = searchUrl ?? buildLitresSearchUrl(normalizedQuery);
+
+  await gotoWithRetry(page, targetUrl);
+  return {
+    query: normalizedQuery,
+    url: page.url(),
+    html: await page.content(),
+  };
+}
+
+export async function withLitresSearchBrowserSession({
+  profileDir = DEFAULT_PROFILE_DIR,
+  playwright,
+  onBeforeSearch,
+} = {}, callback) {
+  if (typeof callback !== 'function') {
+    throw new Error('Litres browser session callback is required');
+  }
+
+  const playwrightApi = playwright ?? await import('playwright');
+  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
+    headless: false,
+  });
+
+  try {
+    const page = context.pages()[0] ?? await context.newPage();
+    await gotoWithRetry(page, 'https://www.litres.ru/');
+    if (typeof onBeforeSearch === 'function') {
+      await onBeforeSearch({
+        pageUrl: page.url(),
+      });
+    }
+
+    return await callback({
+      fetchSearchPage: ({ query, searchUrl }) => (
+        fetchLitresSearchPageWithPage(page, { query, searchUrl })
+      ),
+    });
   } finally {
     await context.close();
   }

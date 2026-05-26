@@ -586,3 +586,73 @@ test('main updates only Yandex Books URLs for existing books after merge', async
     },
   ]);
 });
+
+test('main saves matching Litres URLs with injected fetcher', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'livelib-wishlist-'));
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const htmlPath = join(directory, 'wish.html');
+  const outPath = join(directory, 'result', 'wishlist.json');
+  const logs = [];
+  t.mock.method(console, 'log', (message) => {
+    logs.push(message);
+  });
+
+  await writeFile(
+    htmlPath,
+    `
+      <div class="brow-book">
+        <a class="brow-book-name" href="/book/100000">Сто лет одиночества</a>
+        <a class="brow-book-author" href="/author/1">Габриэль Гарсиа Маркес</a>
+      </div>
+    `,
+    'utf8',
+  );
+
+  const exitCode = await main(
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish',
+      '--html',
+      htmlPath,
+      '--out',
+      outPath,
+      '--max-results',
+      '1',
+    ],
+    {
+      async litresSearchPageFetcher() {
+        return {
+          url: 'https://www.litres.ru/search/?q=test',
+          html: `
+            <article>
+              <a href="/book/gabriel-garsia-markes/sto-let-odinochestva-123/">Сто лет одиночества</a>
+              <a href="/author/gabriel-garsia-markes/">Габриэль Гарсиа Маркес</a>
+            </article>
+            <article>
+              <a href="/audiobook/gabriel-garsia-markes/sto-let-odinochestva-456/">Сто лет одиночества. Полная версия</a>
+              <a href="/author/gabriel-garsia-markes/">Габриэль Гарсиа Маркес</a>
+            </article>
+          `,
+        };
+      },
+      async litresSleep() {},
+    },
+  );
+  const saved = JSON.parse(await readFile(outPath, 'utf8'));
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(saved, [
+    {
+      title: 'Сто лет одиночества',
+      authors: ['Габриэль Гарсиа Маркес'],
+      url: 'https://www.livelib.ru/book/100000',
+      yandex_books_urls: [],
+      litres_urls: ['https://www.litres.ru/book/gabriel-garsia-markes/sto-let-odinochestva-123'],
+    },
+  ]);
+  assert.ok(logs.includes('Found Litres links for 1 book(s)'));
+  assert.ok(logs.includes('Skipped 0 book(s) with existing Litres links'));
+  assert.ok(logs.includes('Enriched 1 book(s) with new Litres links'));
+});
