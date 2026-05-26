@@ -192,6 +192,24 @@ test('matches Litres result by similar title and author', () => {
   );
 });
 
+test('matches Litres result when source title has collection format note', () => {
+  const book = {
+    title: 'История моей жизни (сборник)',
+    authors: ['Хелен Келлер'],
+  };
+
+  assert.equal(
+    isLitresResultSimilarToBook(
+      {
+        title: 'История моей жизни. Открывая мир движениями пальцев',
+        authors: ['Хелен Келлер'],
+      },
+      book,
+    ),
+    true,
+  );
+});
+
 test('filters matching Litres URLs for a source book', () => {
   const book = {
     title: 'Сто лет одиночества',

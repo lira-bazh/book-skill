@@ -289,9 +289,9 @@ test('extracts LiveLib book page description and image from explicit metadata', 
   );
 });
 
-test('extracts LiveLib book page description and image from page content', () => {
+test('extracts LiveLib book page description from about text and image from page content', () => {
   const html = `
-    <section class="book-description">
+    <section class="bc-about__txt">
       Описание книги
       A  careful   visible description.
       Читать полностью

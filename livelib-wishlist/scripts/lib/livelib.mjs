@@ -4,7 +4,9 @@ import { cleanText, extractHrefValues } from './text-match.mjs';
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
 const BOOK_ITEM_PATH_RE = /^\/(?:book|work)\/[^/]+$/;
+const BOOK_PAGE_DESCRIPTION_SELECTOR = '.bc-about__txt';
 const DESCRIPTION_SELECTOR = [
+  BOOK_PAGE_DESCRIPTION_SELECTOR,
   '[itemprop="description"]',
   '.book-description',
   '.book-card-description',
@@ -314,6 +316,7 @@ export async function enrichBooksWithBookPageDetails(
 
 function extractBookPageDescription($) {
   const candidates = [
+    $(BOOK_PAGE_DESCRIPTION_SELECTOR).first().text(),
     $('meta[property="og:description"]').first().attr('content'),
     $('meta[name="description"]').first().attr('content'),
     $('meta[itemprop="description"]').first().attr('content'),

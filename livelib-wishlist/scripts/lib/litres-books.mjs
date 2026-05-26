@@ -9,10 +9,15 @@ import {
 
 const LITRES_ITEM_PATH_RE = /^\/(?:book|audiobook)\/[^/]+(?:\/[^/]+)*$/;
 const NON_TITLE_TEXT_RE = /^(?:купить|читать|слушать|скачать|подробнее|в корзину|фрагмент|слушать фрагмент|читать онлайн|отложить|оценить|\d+(?:[.,]\d+)?\s*(?:₽|руб\.?|р\.?))$/i;
+const TITLE_FORMAT_NOTE_RE = /\s*\((?:сборник)\)\s*/giu;
+
+function normalizeLitresTitleForMatch(title) {
+  return normalizeForMatch(cleanText(title).replace(TITLE_FORMAT_NOTE_RE, ' '));
+}
 
 export function isSimilarLitresTitle(sourceTitle, candidateTitle) {
-  const source = normalizeForMatch(sourceTitle);
-  const candidate = normalizeForMatch(candidateTitle);
+  const source = normalizeLitresTitleForMatch(sourceTitle);
+  const candidate = normalizeLitresTitleForMatch(candidateTitle);
 
   if (!source || !candidate) {
     return false;
