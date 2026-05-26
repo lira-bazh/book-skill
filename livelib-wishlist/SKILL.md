@@ -14,7 +14,7 @@ https://www.livelib.ru/reader/<username>/wish
 ## Workflow
 
 1. Validate that the URL points to `www.livelib.ru/reader/<username>/wish`.
-2. Run `scripts/livelib-wish-to-json.mjs` with `--browser`, a persistent profile directory, a sensible `--max-pages` limit, and optional `--max-results`.
+2. Run `scripts/livelib-wish-to-json.mjs` with a persistent profile directory, a sensible `--max-pages` limit, and optional `--max-results`.
 3. Open LiveLib in a visible browser window.
 4. Process the first page and all pagination pages for the same user's public wish-list.
 5. Search matching books on Yandex Books and Litres for books without existing saved links.
@@ -49,7 +49,6 @@ Main workflow:
 ```bash
 node scripts/livelib-wish-to-json.mjs \
   "https://www.livelib.ru/reader/<username>/wish" \
-  --browser \
   --profile-dir livelib-wishlist/.browser-profile \
   --out wishlist.json \
   --max-pages 50 \

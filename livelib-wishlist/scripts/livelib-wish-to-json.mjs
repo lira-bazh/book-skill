@@ -3,8 +3,12 @@
 import { createInterface } from 'node:readline/promises';
 
 import {
+  enrichBooksWithAudiobookDuration,
+  firstAudiobookUrlForBook,
+  hasRecordedAudiobookDuration,
+} from './lib/audiobook-duration.mjs';
+import {
   DEFAULT_MAX_PAGES,
-  DEFAULT_PROFILE_DIR,
   fetchYandexBooksSearchPageWithBrowser,
   withBrowserSession,
   withLitresSearchBrowserSession,
@@ -45,17 +49,16 @@ function parseArgs(argv) {
   const args = {
     out: 'wishlist.json',
     html: null,
-    browser: false,
     maxPages: DEFAULT_MAX_PAGES,
-    profileDir: DEFAULT_PROFILE_DIR,
+    profileDir: undefined,
     maxResults: DEFAULT_MAX_RESULTS,
   };
   const positional = [];
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === '--browser') {
-      args.browser = true;
+    if (arg === '--') {
+      continue;
     } else if (arg === '--out') {
       args.out = argv[++i];
     } else if (arg === '--html') {
@@ -78,12 +81,15 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
+  const scriptPath = process.argv[1]?.endsWith('livelib-wish-to-json.mjs')
+    ? process.argv[1]
+    : 'livelib-wishlist/scripts/livelib-wish-to-json.mjs';
+
   console.log(`Usage:
-  node scripts/livelib-wish-to-json.mjs <url> --browser --out wishlist.json --max-pages 50
-  node scripts/livelib-wish-to-json.mjs <url> --html wish_page.html --out wishlist.json
+  node ${scriptPath} <url> --out wishlist.json --max-pages 50
+  node ${scriptPath} <url> --html wish_page.html --out wishlist.json
 
 Options:
-  --browser                Open LiveLib in visible Playwright Chromium.
   --profile-dir <path>     Persistent browser profile directory. Default: livelib-wishlist/.browser-profile
   --html <path>            Fallback: load a saved HTML file.
   --out <path>             Output JSON path. Default: wishlist.json
@@ -112,6 +118,8 @@ export async function main(
     yandexSleep,
     litresSearchPageFetcher,
     litresSleep,
+    audiobookPageFetcher,
+    audiobookSleep,
     confirmLitresLogin = waitForLitresLoginConfirmation,
     browserSessionRunner = withBrowserSession,
     withLitresSearchSession = withLitresSearchBrowserSession,
@@ -159,6 +167,9 @@ export async function main(
   let enrichedYandexBooks = 0;
   let skippedLitres = 0;
   let enrichedLitres = 0;
+  let ranAudiobookDurationEnrichment = false;
+  let skippedAudiobookDuration = 0;
+  let enrichedAudiobookDuration = 0;
   let outputPath;
 
   const finishWorkflow = async ({ nextFetchedPages, browserSession = null }) => {
@@ -166,8 +177,10 @@ export async function main(
     livelibBooks = extractBooksFromPages(fetchedPages);
     livelibMatch = matchBooksByLiveLibUrl(livelibBooks, existingBooks);
     books = mergeExistingLiveLibBooks(livelibBooks, existingBooks);
-    const shouldEnrichYandexBooks = args.browser || typeof yandexSearchPageFetcher === 'function';
-    const shouldEnrichLitres = args.browser || typeof litresSearchPageFetcher === 'function';
+    const shouldEnrichYandexBooks = Boolean(browserSession) || typeof yandexSearchPageFetcher === 'function';
+    const shouldEnrichLitres = Boolean(browserSession) || typeof litresSearchPageFetcher === 'function';
+    const fetchAudiobookPage = audiobookPageFetcher ?? browserSession?.fetchAudiobookPage;
+    const shouldEnrichAudiobookDuration = typeof fetchAudiobookPage === 'function';
 
     if (shouldEnrichYandexBooks) {
       const yandexUrlsBeforeEnrichment = new Map(
@@ -234,6 +247,25 @@ export async function main(
       )).length;
     }
 
+    if (shouldEnrichAudiobookDuration) {
+      ranAudiobookDurationEnrichment = true;
+      const audiobookDurationBeforeEnrichment = new Map(
+        books.map((book) => [book.url, hasRecordedAudiobookDuration(book)]),
+      );
+      skippedAudiobookDuration = books.filter(hasRecordedAudiobookDuration).length;
+      books = await enrichBooksWithAudiobookDuration(books, {
+        fetchAudiobookPage,
+        pageDelayMs: FIXED_REQUEST_DELAY_MS,
+        onFetchError({ book, error }) {
+          console.error(`warning: skipped audiobook duration for "${book.title}": ${error.message}`);
+        },
+        sleep: audiobookSleep,
+      });
+      enrichedAudiobookDuration = books.filter((book) => (
+        !audiobookDurationBeforeEnrichment.get(book.url) && hasRecordedAudiobookDuration(book)
+      )).length;
+    }
+
     outputPath = await writeBooksJsonFn(args.out, books);
   };
 
@@ -243,7 +275,7 @@ export async function main(
       await finishWorkflow({
         nextFetchedPages: [{ url: wishlistUrl.url, html: savedPage.html }],
       });
-    } else if (args.browser) {
+    } else {
       await browserSessionRunner({ profileDir: args.profileDir }, async (browserSession) => {
         const nextFetchedPages = await browserSession.fetchWishlistPages({
           wishlistUrl,
@@ -252,15 +284,13 @@ export async function main(
         });
         await finishWorkflow({ nextFetchedPages, browserSession });
       });
-    } else {
-      throw new Error('Use --browser for the main workflow, or --html for a saved HTML fallback.');
     }
   } catch (error) {
     console.error(`error: ${error.message}`);
     return 2;
   }
-  const shouldEnrichYandexBooks = args.browser || typeof yandexSearchPageFetcher === 'function';
-  const shouldEnrichLitres = args.browser || typeof litresSearchPageFetcher === 'function';
+  const shouldEnrichYandexBooks = !args.html || typeof yandexSearchPageFetcher === 'function';
+  const shouldEnrichLitres = !args.html || typeof litresSearchPageFetcher === 'function';
 
   console.log(`Accepted LiveLib wish-list URL for user ${wishlistUrl.username}: ${wishlistUrl.url}`);
   console.log(`Loaded ${fetchedPages.length} HTML page(s)`);
@@ -279,6 +309,14 @@ export async function main(
     console.log(`Found Litres links for ${booksWithLitresUrls} book(s)`);
     console.log(`Skipped ${skippedLitres} book(s) with existing Litres links`);
     console.log(`Enriched ${enrichedLitres} book(s) with new Litres links`);
+  }
+  if (ranAudiobookDurationEnrichment) {
+    const booksWithAudiobookUrls = books.filter((book) => firstAudiobookUrlForBook(book)).length;
+    const booksWithAudiobookDuration = books.filter(hasRecordedAudiobookDuration).length;
+    console.log(`Found audiobook links for ${booksWithAudiobookUrls} book(s)`);
+    console.log(`Found audiobook duration for ${booksWithAudiobookDuration} book(s)`);
+    console.log(`Skipped ${skippedAudiobookDuration} book(s) with existing audiobook duration`);
+    console.log(`Enriched ${enrichedAudiobookDuration} book(s) with audiobook duration`);
   }
   for (const fetched of fetchedPages) {
     console.log(`- ${fetched.url}: ${fetched.html.length} characters`);

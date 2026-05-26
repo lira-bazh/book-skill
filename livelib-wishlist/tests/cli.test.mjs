@@ -670,7 +670,6 @@ test('main browser workflow uses one shared browser session', async (t) => {
   const exitCode = await main(
     [
       'https://www.livelib.ru/reader/LiraLantan/wish',
-      '--browser',
       '--out',
       outPath,
     ],
@@ -770,7 +769,6 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
   const exitCode = await main(
     [
       'https://www.livelib.ru/reader/LiraLantan/wish',
-      '--browser',
       '--out',
       outPath,
     ],

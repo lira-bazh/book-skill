@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "livelib:wishlist": "node livelib-wishlist/scripts/livelib-wish-to-json.mjs",
     "test": "node --test"
   },
   "dependencies": {

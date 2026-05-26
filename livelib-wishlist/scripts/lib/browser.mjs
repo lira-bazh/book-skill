@@ -9,6 +9,7 @@ import {
 } from './livelib.mjs';
 import { buildLitresSearchUrl } from './litres-books.mjs';
 import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
+import { isAudiobookUrl } from './audiobook-duration.mjs';
 import { cleanText } from './text-match.mjs';
 
 export const DEFAULT_MAX_PAGES = 50;
@@ -81,6 +82,16 @@ export async function fetchLitresSearchPageWithBrowser({
   ));
 }
 
+export async function fetchAudiobookPageWithBrowser({
+  url,
+  profileDir = DEFAULT_PROFILE_DIR,
+  playwright,
+}) {
+  return withBrowserSession({ profileDir, playwright }, ({ fetchAudiobookPage }) => (
+    fetchAudiobookPage({ url })
+  ));
+}
+
 async function fetchYandexBooksSearchPageWithPage(page, { query }) {
   const searchUrl = buildYandexBooksSearchUrl(query);
   await gotoWithRetry(page, searchUrl);
@@ -99,6 +110,18 @@ async function fetchLitresSearchPageWithPage(page, { query, searchUrl }) {
   await waitForLitresSearchResults(page);
   return {
     query: normalizedQuery,
+    url: page.url(),
+    html: await page.content(),
+  };
+}
+
+async function fetchAudiobookPageWithPage(page, { url }) {
+  if (!isAudiobookUrl(url)) {
+    throw new Error('Audiobook page URL must contain audiobook');
+  }
+
+  await gotoWithRetry(page, url);
+  return {
     url: page.url(),
     html: await page.content(),
   };
@@ -218,6 +241,7 @@ export async function withBrowserSession({
       fetchWishlistPages: (options) => fetchWishlistPagesWithPage(page, options),
       fetchYandexBooksSearchPage: (options) => fetchYandexBooksSearchPageWithPage(page, options),
       fetchLitresSearchPage: (options) => fetchLitresSearchPageWithPage(page, options),
+      fetchAudiobookPage: (options) => fetchAudiobookPageWithPage(page, options),
       openLitresHome: async () => {
         await gotoWithRetry(page, 'https://www.litres.ru/');
         return {
