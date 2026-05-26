@@ -4,6 +4,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS,
   DEFAULT_NAVIGATION_TIMEOUT_MS,
   fetchLitresSearchPageWithBrowser,
   fetchWishlistPagesWithBrowser,
@@ -22,6 +23,12 @@ test('browser mode opens Yandex Books search page with persistent profile', asyn
     async goto(url, options) {
       currentUrl = url;
       calls.push(['goto', url, options]);
+    },
+    async waitForLoadState(state, options) {
+      calls.push(['waitForLoadState', state, options]);
+    },
+    async waitForFunction(callback, arg, options) {
+      calls.push(['waitForFunction', typeof callback, arg, options]);
     },
     url() {
       return currentUrl;
@@ -168,6 +175,17 @@ test('browser mode opens Litres search page with persistent profile', async () =
     waitUntil: 'domcontentloaded',
     timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
   });
+  assert.deepEqual(calls[2], [
+    'waitForLoadState',
+    'networkidle',
+    { timeout: DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS },
+  ]);
+  assert.deepEqual(calls[3], [
+    'waitForFunction',
+    'function',
+    undefined,
+    { timeout: DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS },
+  ]);
   assert.equal(openedUrl.origin, 'https://www.litres.ru');
   assert.equal(openedUrl.pathname, '/search/');
   assert.equal(openedUrl.searchParams.get('q'), 'Сто лет одиночества Маркес');
@@ -186,6 +204,8 @@ test('Litres browser session reuses one persistent context for multiple searches
       currentUrl = url;
       visited.push(url);
     },
+    async waitForLoadState() {},
+    async waitForFunction() {},
     url() {
       return currentUrl;
     },

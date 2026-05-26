@@ -15,6 +15,7 @@ export const DEFAULT_MAX_PAGES = 50;
 export const DEFAULT_PAGE_DELAY_MS = 2000;
 export const DEFAULT_NAVIGATION_TIMEOUT_MS = 120000;
 export const DEFAULT_NAVIGATION_ATTEMPTS = 3;
+export const DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS = 5000;
 
 const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const DEFAULT_PROFILE_DIR = resolve(SKILL_DIR, '.browser-profile');
@@ -112,11 +113,40 @@ async function fetchLitresSearchPageWithPage(page, { query, searchUrl }) {
   const targetUrl = searchUrl ?? buildLitresSearchUrl(normalizedQuery);
 
   await gotoWithRetry(page, targetUrl);
+  await waitForLitresSearchResults(page);
   return {
     query: normalizedQuery,
     url: page.url(),
     html: await page.content(),
   };
+}
+
+async function waitForLitresSearchResults(page) {
+  if (typeof page.waitForLoadState === 'function') {
+    await page.waitForLoadState('networkidle', {
+      timeout: DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS,
+    }).catch(() => {});
+  }
+
+  if (typeof page.waitForFunction !== 'function') {
+    return;
+  }
+
+  await page.waitForFunction(() => {
+    const itemPathRe = /^\/(?:book|audiobook)\/[^/]+(?:\/[^/]+)*\/?$/;
+    return [...document.querySelectorAll('a[href]')].some((element) => {
+      try {
+        const url = new URL(element.getAttribute('href'), window.location.href);
+        const hostname = url.hostname.toLowerCase();
+        return (hostname === 'www.litres.ru' || hostname === 'litres.ru')
+          && itemPathRe.test(url.pathname);
+      } catch {
+        return false;
+      }
+    });
+  }, undefined, {
+    timeout: DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS,
+  }).catch(() => {});
 }
 
 export async function withLitresSearchBrowserSession({
