@@ -285,6 +285,7 @@ test('extracts LiveLib book page description and image from explicit metadata', 
     {
       description: 'Atmospheric book description.',
       image: 'https://www.livelib.ru/images/book-cover.jpg',
+      genre: null,
     },
   );
 });
@@ -304,11 +305,28 @@ test('extracts LiveLib book page description from about text and image from page
     {
       description: 'A careful visible description.',
       image: 'https://i.livelib.ru/boocover/100000.jpg',
+      genre: null,
     },
   );
 });
 
-test('returns null LiveLib book page details when description and image are missing', () => {
+test('extracts normalized LiveLib book page genre from book info', () => {
+  const cases = [
+    ['<div class="bc-info__item">Жанр: Научно-популярная литература</div>', 'научпоп'],
+    ['<div class="bc-info__item">Космическая фантастика</div>', 'фантастика'],
+    ['<div class="bc-info__item">Героическое фэнтези</div>', 'фэнтези'],
+    ['<div class="bc-info__item">Современная проза</div>', null],
+  ];
+
+  for (const [html, genre] of cases) {
+    assert.equal(
+      extractBookPageDetails(html, 'https://www.livelib.ru/book/100000-title').genre,
+      genre,
+    );
+  }
+});
+
+test('returns null LiveLib book page details when description, image, and genre are missing', () => {
   const html = '<main><h1>Book title</h1><img src="data:image/gif;base64,abc"></main>';
 
   assert.deepEqual(
@@ -316,12 +334,21 @@ test('returns null LiveLib book page details when description and image are miss
     {
       description: null,
       image: null,
+      genre: null,
     },
   );
 });
 
 test('detects books that need LiveLib book page details', () => {
-  assert.equal(needsBookPageDetails({ description: 'Done', image: 'https://example.com/cover.jpg' }), false);
+  assert.equal(
+    needsBookPageDetails({
+      description: 'Done',
+      image: 'https://example.com/cover.jpg',
+      genre: null,
+    }),
+    false,
+  );
+  assert.equal(needsBookPageDetails({ description: 'Done', image: 'https://example.com/cover.jpg' }), true);
   assert.equal(needsBookPageDetails({ description: 'Done' }), true);
   assert.equal(needsBookPageDetails({ image: 'https://example.com/cover.jpg' }), true);
   assert.equal(needsBookPageDetails({ description: ' ', image: 'https://example.com/cover.jpg' }), true);
@@ -335,7 +362,15 @@ test('enriches only books with missing LiveLib book page details', async () => {
       url: 'https://www.livelib.ru/book/100000',
       description: 'Existing description',
       image: 'https://i.livelib.ru/boocover/existing.jpg',
+      genre: null,
       yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+    },
+    {
+      title: 'Recorded null genre',
+      url: 'https://www.livelib.ru/book/150000',
+      description: 'Existing description',
+      image: 'https://i.livelib.ru/boocover/null-genre.jpg',
+      genre: null,
     },
     {
       title: 'Needs both',
@@ -369,6 +404,7 @@ test('enriches only books with missing LiveLib book page details', async () => {
         html: `
           <meta property="og:description" content="Fetched description for ${url}">
           <meta property="og:image" content="/covers/${url.split('/').at(-1)}.jpg">
+          <div class="bc-info__item">Жанр: фантастика</div>
         `,
       };
     },
@@ -380,13 +416,17 @@ test('enriches only books with missing LiveLib book page details', async () => {
     'https://www.livelib.ru/book/400000',
   ]);
   assert.deepEqual(enriched[0], books[0]);
-  assert.equal(enriched[1].description, 'Fetched description for https://www.livelib.ru/book/200000');
-  assert.equal(enriched[1].image, 'https://www.livelib.ru/covers/200000.jpg');
-  assert.equal(enriched[2].description, 'Keep this description');
-  assert.equal(enriched[2].image, 'https://www.livelib.ru/covers/300000.jpg');
-  assert.equal(enriched[2].audiobook_duration_minutes, 515);
-  assert.equal('description' in enriched[3], false);
-  assert.equal('image' in enriched[3], false);
+  assert.deepEqual(enriched[1], books[1]);
+  assert.equal(enriched[2].description, 'Fetched description for https://www.livelib.ru/book/200000');
+  assert.equal(enriched[2].image, 'https://www.livelib.ru/covers/200000.jpg');
+  assert.equal(enriched[2].genre, 'фантастика');
+  assert.equal(enriched[3].description, 'Keep this description');
+  assert.equal(enriched[3].image, 'https://www.livelib.ru/covers/300000.jpg');
+  assert.equal(enriched[3].genre, 'фантастика');
+  assert.equal(enriched[3].audiobook_duration_minutes, 515);
+  assert.equal('description' in enriched[4], false);
+  assert.equal('image' in enriched[4], false);
+  assert.equal('genre' in enriched[4], false);
 });
 
 test('updates only missing LiveLib book page detail fields while preserving saved data', async () => {
@@ -396,6 +436,7 @@ test('updates only missing LiveLib book page detail fields while preserving save
       authors: ['Saved Author'],
       url: 'https://www.livelib.ru/book/100000',
       description: 'Saved description',
+      genre: 'научпоп',
       yandex_books_urls: ['https://books.yandex.ru/books/saved'],
       litres_urls: ['https://www.litres.ru/book/author/saved-123'],
       audiobook_duration_minutes: 515,
@@ -409,6 +450,7 @@ test('updates only missing LiveLib book page detail fields while preserving save
       html: `
         <meta property="og:description" content="Fetched description must not replace saved one">
         <meta property="og:image" content="/covers/100000.jpg">
+        <div class="bc-info__item">Жанр: фэнтези</div>
       `,
     }),
   });
@@ -420,6 +462,7 @@ test('updates only missing LiveLib book page detail fields while preserving save
       url: 'https://www.livelib.ru/book/100000',
       description: 'Saved description',
       image: 'https://www.livelib.ru/covers/100000.jpg',
+      genre: 'научпоп',
       yandex_books_urls: ['https://books.yandex.ru/books/saved'],
       litres_urls: ['https://www.litres.ru/book/author/saved-123'],
       audiobook_duration_minutes: 515,
@@ -449,7 +492,11 @@ test('keeps enriching LiveLib book page details after a failed page fetch', asyn
 
       return {
         url,
-        html: '<meta property="og:description" content="Recovered"><meta property="og:image" content="/cover.jpg">',
+        html: `
+          <meta property="og:description" content="Recovered">
+          <meta property="og:image" content="/cover.jpg">
+          <div class="bc-info__item">Жанр: фэнтези</div>
+        `,
       };
     },
     onFetchError({ book, error }) {
@@ -461,6 +508,7 @@ test('keeps enriching LiveLib book page details after a failed page fetch', asyn
   assert.deepEqual(enriched[0], books[0]);
   assert.equal(enriched[1].description, 'Recovered');
   assert.equal(enriched[1].image, 'https://www.livelib.ru/cover.jpg');
+  assert.equal(enriched[1].genre, 'фэнтези');
 });
 
 test('matches LiveLib books with existing books by LiveLib URL', () => {

@@ -38,15 +38,17 @@ The skill saves these fields for each book:
   "yandex_books_urls": ["string"],
   "litres_urls": ["string"],
   "description": "string",
-  "image": "string"
+  "image": "string",
+  "genre": "string | null"
 }
 ```
 
 Existing JSON data for books still present on LiveLib must be preserved, including
 additional user fields and already filled `yandex_books_urls`, `litres_urls`,
-`description`, `image`, or `audiobook_duration_minutes`. `description` and
-`image` are optional fields: if LiveLib page details are not found, the fields
-may be absent.
+`description`, `image`, `genre`, or `audiobook_duration_minutes`. `description`,
+`image`, and `genre` are optional fields: if LiveLib page details are not found,
+the fields may be absent. Existing `genre` values, including `null`, must not be
+overwritten during enrichment.
 
 ## CLI
 

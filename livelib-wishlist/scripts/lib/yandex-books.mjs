@@ -85,14 +85,7 @@ function areAuthorNamePartsCompatible(fullNameParts, abbreviatedNameParts) {
 }
 
 export function buildYandexBooksSearchQuery(book) {
-  const title = cleanText(book?.title);
-  const authors = Array.isArray(book?.authors) ? book.authors : [];
-  const uniqueAuthors = authors
-    .map((author) => cleanText(author))
-    .filter(Boolean)
-    .filter((author, index, values) => values.indexOf(author) === index);
-
-  return [title, ...uniqueAuthors].filter(Boolean).join(' ');
+  return cleanText(book?.title);
 }
 
 export function buildYandexBooksSearchUrl(query) {

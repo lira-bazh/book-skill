@@ -162,6 +162,7 @@ test('main enriches LiveLib book page details before writing output JSON', async
           html: `
             <meta property="og:description" content="Book One description">
             <meta property="og:image" content="/covers/book-one.jpg">
+            <div class="bc-info__item">Жанр: фантастика</div>
           `,
         };
       },
@@ -180,12 +181,15 @@ test('main enriches LiveLib book page details before writing output JSON', async
       yandex_books_urls: [],
       description: 'Book One description',
       image: 'https://www.livelib.ru/covers/book-one.jpg',
+      genre: 'фантастика',
     },
   ]);
   assert.ok(logs.includes('Found LiveLib descriptions for 1 book(s)'));
   assert.ok(logs.includes('Found LiveLib images for 1 book(s)'));
+  assert.ok(logs.includes('Found LiveLib genres for 1 book(s)'));
   assert.ok(logs.includes('Enriched 1 book(s) with LiveLib descriptions'));
   assert.ok(logs.includes('Enriched 1 book(s) with LiveLib images'));
+  assert.ok(logs.includes('Enriched 1 book(s) with LiveLib genres'));
 });
 
 test('main checks output JSON before loading LiveLib HTML fallback', async (t) => {
@@ -559,7 +563,7 @@ test('main reuses existing Yandex Books URLs and searches only missing books', a
   const saved = JSON.parse(await readFile(outPath, 'utf8'));
 
   assert.equal(exitCode, 0);
-  assert.deepEqual(calls, ['Полковнику никто не пишет Габриэль Гарсиа Маркес']);
+  assert.deepEqual(calls, ['Полковнику никто не пишет']);
   assert.ok(logs.includes('Loaded 1 existing book(s) from output JSON'));
   assert.ok(logs.includes('Found 2 book(s) on LiveLib'));
   assert.ok(logs.includes('Added 1 new LiveLib book(s)'));

@@ -14,13 +14,13 @@ import {
   normalizeLitresUrl,
 } from '../scripts/lib/litres-books.mjs';
 
-test('builds Litres search query from title and authors', () => {
+test('builds Litres search query from title only', () => {
   assert.equal(
     buildLitresSearchQuery({
       title: '  Сто   лет   одиночества ',
       authors: [' Габриэль Гарсиа Маркес ', 'Габриэль Гарсиа Маркес'],
     }),
-    'Сто лет одиночества Габриэль Гарсиа Маркес',
+    'Сто лет одиночества',
   );
 });
 
@@ -320,7 +320,7 @@ test('enriches books with Litres URLs and reuses existing links', async () => {
     sleep: async () => {},
   });
 
-  assert.deepEqual(calls, ['Полковнику никто не пишет Габриэль Гарсиа Маркес']);
+  assert.deepEqual(calls, ['Полковнику никто не пишет']);
   assert.deepEqual(enriched, [
     {
       ...books[0],

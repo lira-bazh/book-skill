@@ -14,6 +14,7 @@ test('enriches only audiobook duration when LiveLib details are already recorded
       url: 'https://www.livelib.ru/book/100000',
       description: 'Existing description',
       image: 'https://www.livelib.ru/image.jpg',
+      genre: null,
       yandex_books_urls: ['https://books.yandex.ru/audiobooks/needed'],
     },
   ];
@@ -34,12 +35,14 @@ test('enriches only audiobook duration when LiveLib details are already recorded
   assert.equal(result.books[0].audiobook_duration_minutes, 515);
   assert.equal(result.books[0].description, 'Existing description');
   assert.equal(result.books[0].image, 'https://www.livelib.ru/image.jpg');
+  assert.equal(result.books[0].genre, null);
   assert.deepEqual(result.stats, {
     skippedAudiobookDuration: 0,
     enrichedAudiobookDuration: 1,
     skippedBookPageDetails: 1,
     enrichedBookDescriptions: 0,
     enrichedBookImages: 0,
+    enrichedBookGenres: 0,
   });
 });
 
@@ -69,6 +72,9 @@ test('enriches only missing LiveLib description and image', async () => {
               <meta property="og:description" content="Book description">
               <meta property="og:image" content="/cover.jpg">
             </head>
+            <body>
+              <div class="bc-info__item">Жанр: фэнтези</div>
+            </body>
           </html>
         `,
       };
@@ -79,12 +85,75 @@ test('enriches only missing LiveLib description and image', async () => {
   assert.deepEqual(bookPageCalls, ['https://www.livelib.ru/book/200000']);
   assert.equal(result.books[0].description, 'Book description');
   assert.equal(result.books[0].image, 'https://www.livelib.ru/cover.jpg');
+  assert.equal(result.books[0].genre, 'фэнтези');
   assert.deepEqual(result.stats, {
     skippedAudiobookDuration: 0,
     enrichedAudiobookDuration: 0,
     skippedBookPageDetails: 0,
     enrichedBookDescriptions: 1,
     enrichedBookImages: 1,
+    enrichedBookGenres: 1,
+  });
+});
+
+test('does not write missing LiveLib genre when page has no mapped genre', async () => {
+  const result = await enrichBooksWithMissingDetails([
+    {
+      title: 'No mapped genre',
+      url: 'https://www.livelib.ru/book/250000',
+      description: 'Existing description',
+      image: 'https://www.livelib.ru/cover.jpg',
+    },
+  ], {
+    fetchBookPage: async ({ url }) => ({
+      url,
+      html: '<div class="bc-info__item">Современная проза</div>',
+    }),
+  });
+
+  assert.equal('genre' in result.books[0], false);
+  assert.deepEqual(result.stats, {
+    skippedAudiobookDuration: 0,
+    enrichedAudiobookDuration: 0,
+    skippedBookPageDetails: 0,
+    enrichedBookDescriptions: 0,
+    enrichedBookImages: 0,
+    enrichedBookGenres: 0,
+  });
+});
+
+test('does not overwrite existing LiveLib genre', async () => {
+  const books = [
+    {
+      title: 'Existing genre',
+      url: 'https://www.livelib.ru/book/260000',
+      description: 'Existing description',
+      image: 'https://www.livelib.ru/cover.jpg',
+      genre: 'научпоп',
+    },
+    {
+      title: 'Existing null genre',
+      url: 'https://www.livelib.ru/book/270000',
+      description: 'Existing description',
+      image: 'https://www.livelib.ru/null-genre.jpg',
+      genre: null,
+    },
+  ];
+
+  const result = await enrichBooksWithMissingDetails(books, {
+    fetchBookPage: async () => {
+      throw new Error('book page fetch should not be called');
+    },
+  });
+
+  assert.deepEqual(result.books, books);
+  assert.deepEqual(result.stats, {
+    skippedAudiobookDuration: 0,
+    enrichedAudiobookDuration: 0,
+    skippedBookPageDetails: 2,
+    enrichedBookDescriptions: 0,
+    enrichedBookImages: 0,
+    enrichedBookGenres: 0,
   });
 });
 
@@ -113,6 +182,9 @@ test('enriches audiobook duration and LiveLib details in one pass', async () => 
               <meta name="description" content="Combined description">
               <meta itemprop="image" content="https://cdn.example.test/cover.png">
             </head>
+            <body>
+              <div class="bc-info__item">Научно-популярная литература</div>
+            </body>
           </html>
         `,
       };
@@ -126,12 +198,14 @@ test('enriches audiobook duration and LiveLib details in one pass', async () => 
   assert.equal(result.books[0].audiobook_duration_minutes, 80);
   assert.equal(result.books[0].description, 'Combined description');
   assert.equal(result.books[0].image, 'https://cdn.example.test/cover.png');
+  assert.equal(result.books[0].genre, 'научпоп');
   assert.deepEqual(result.stats, {
     skippedAudiobookDuration: 0,
     enrichedAudiobookDuration: 1,
     skippedBookPageDetails: 0,
     enrichedBookDescriptions: 1,
     enrichedBookImages: 1,
+    enrichedBookGenres: 1,
   });
 });
 
@@ -143,6 +217,7 @@ test('skips network requests when all details are already recorded', async () =>
       audiobook_duration_minutes: 42,
       description: 'Recorded description',
       image: 'https://www.livelib.ru/recorded.jpg',
+      genre: null,
       yandex_books_urls: ['https://books.yandex.ru/audiobooks/complete'],
     },
   ];
@@ -163,6 +238,7 @@ test('skips network requests when all details are already recorded', async () =>
     skippedBookPageDetails: 1,
     enrichedBookDescriptions: 0,
     enrichedBookImages: 0,
+    enrichedBookGenres: 0,
   });
 });
 
@@ -174,6 +250,7 @@ test('continues processing when one fetcher fails', async () => {
       url: 'https://www.livelib.ru/book/500000',
       description: 'Already described',
       image: 'https://www.livelib.ru/already.jpg',
+      genre: null,
       yandex_books_urls: ['https://books.yandex.ru/audiobooks/broken'],
     },
     {
@@ -194,6 +271,9 @@ test('continues processing when one fetcher fails', async () => {
             <meta property="og:description" content="Recovered description">
             <meta property="og:image" content="/recovered.jpg">
           </head>
+          <body>
+            <div class="bc-info__item">Жанр: фантастика</div>
+          </body>
         </html>
       `,
     }),
@@ -206,11 +286,13 @@ test('continues processing when one fetcher fails', async () => {
   assert.equal('audiobook_duration_minutes' in result.books[0], false);
   assert.equal(result.books[1].description, 'Recovered description');
   assert.equal(result.books[1].image, 'https://www.livelib.ru/recovered.jpg');
+  assert.equal(result.books[1].genre, 'фантастика');
   assert.deepEqual(result.stats, {
     skippedAudiobookDuration: 0,
     enrichedAudiobookDuration: 0,
     skippedBookPageDetails: 1,
     enrichedBookDescriptions: 1,
     enrichedBookImages: 1,
+    enrichedBookGenres: 1,
   });
 });

@@ -24,6 +24,7 @@ const IMAGE_SELECTOR = [
   'img[class*="cover"]',
   'img[class*="book"]',
 ].join(', ');
+const GENRE_SELECTOR = '.bc-info__item';
 
 export class LiveLibAccessError extends Error {}
 
@@ -244,6 +245,7 @@ export function extractBookPageDetails(html, baseUrl) {
   return {
     description: extractBookPageDescription($),
     image: extractBookPageImage($, baseUrl),
+    genre: extractBookPageGenre($),
   };
 }
 
@@ -255,8 +257,16 @@ export function hasRecordedBookPageImage(book) {
   return typeof book?.image === 'string' && cleanText(book.image) !== '';
 }
 
+export function hasRecordedBookPageGenre(book) {
+  return Boolean(book) && Object.prototype.hasOwnProperty.call(book, 'genre');
+}
+
 export function needsBookPageDetails(book) {
-  return !hasRecordedBookPageDescription(book) || !hasRecordedBookPageImage(book);
+  return (
+    !hasRecordedBookPageDescription(book)
+    || !hasRecordedBookPageImage(book)
+    || !hasRecordedBookPageGenre(book)
+  );
 }
 
 export async function enrichBooksWithBookPageDetails(
@@ -286,7 +296,7 @@ export async function enrichBooksWithBookPageDetails(
       continue;
     }
 
-    let details = { description: null, image: null };
+    let details = { description: null, image: null, genre: null };
     try {
       const page = await fetchBookPage({ url: book.url, book });
       details = extractBookPageDetails(page?.html ?? '', page?.url ?? book.url);
@@ -302,6 +312,9 @@ export async function enrichBooksWithBookPageDetails(
     }
     if (!hasRecordedBookPageImage(enrichedBook) && details.image) {
       enrichedBook.image = details.image;
+    }
+    if (!hasRecordedBookPageGenre(enrichedBook) && details.genre !== null) {
+      enrichedBook.genre = details.genre;
     }
 
     enrichedBooks.push(enrichedBook);
@@ -368,6 +381,34 @@ function normalizeBookPageImageUrl(rawUrl, baseUrl) {
   }
 
   return parsed.toString();
+}
+
+function extractBookPageGenre($) {
+  const text = $(GENRE_SELECTOR)
+    .toArray()
+    .map((element) => cleanText($(element).text()))
+    .filter(Boolean)
+    .join(' ');
+
+  return normalizeBookPageGenre(text);
+}
+
+function normalizeBookPageGenre(value) {
+  const text = cleanText(value).toLowerCase();
+
+  if (text.includes('научно-популярная литература')) {
+    return 'научпоп';
+  }
+
+  if (text.includes('фантастика')) {
+    return 'фантастика';
+  }
+
+  if (text.includes('фэнтези')) {
+    return 'фэнтези';
+  }
+
+  return null;
 }
 
 export function extractBooksFromPages(pages) {

@@ -24,6 +24,7 @@ import {
 import {
   extractBooksFromPages,
   hasRecordedBookPageDescription,
+  hasRecordedBookPageGenre,
   hasRecordedBookPageImage,
   matchBooksByLiveLibUrl,
   mergeExistingLiveLibBooks,
@@ -180,6 +181,7 @@ export async function main(
   let skippedBookPageDetails = 0;
   let enrichedBookDescriptions = 0;
   let enrichedBookImages = 0;
+  let enrichedBookGenres = 0;
   let outputPath;
 
   const finishWorkflow = async ({ nextFetchedPages, browserSession = null }) => {
@@ -283,6 +285,7 @@ export async function main(
       skippedBookPageDetails = detailsResult.stats.skippedBookPageDetails;
       enrichedBookDescriptions = detailsResult.stats.enrichedBookDescriptions;
       enrichedBookImages = detailsResult.stats.enrichedBookImages;
+      enrichedBookGenres = detailsResult.stats.enrichedBookGenres;
     }
 
     outputPath = await writeBooksJsonFn(args.out, books);
@@ -340,11 +343,14 @@ export async function main(
   if (ranBookPageDetailsEnrichment) {
     const booksWithDescription = books.filter(hasRecordedBookPageDescription).length;
     const booksWithImage = books.filter(hasRecordedBookPageImage).length;
+    const booksWithGenre = books.filter(hasRecordedBookPageGenre).length;
     console.log(`Found LiveLib descriptions for ${booksWithDescription} book(s)`);
     console.log(`Found LiveLib images for ${booksWithImage} book(s)`);
+    console.log(`Found LiveLib genres for ${booksWithGenre} book(s)`);
     console.log(`Skipped ${skippedBookPageDetails} book(s) with existing LiveLib book page details`);
     console.log(`Enriched ${enrichedBookDescriptions} book(s) with LiveLib descriptions`);
     console.log(`Enriched ${enrichedBookImages} book(s) with LiveLib images`);
+    console.log(`Enriched ${enrichedBookGenres} book(s) with LiveLib genres`);
   }
   for (const fetched of fetchedPages) {
     console.log(`- ${fetched.url}: ${fetched.html.length} characters`);

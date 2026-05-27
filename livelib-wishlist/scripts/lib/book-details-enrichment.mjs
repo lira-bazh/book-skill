@@ -6,6 +6,7 @@ import {
 import {
   extractBookPageDetails,
   hasRecordedBookPageDescription,
+  hasRecordedBookPageGenre,
   hasRecordedBookPageImage,
   needsBookPageDetails,
 } from './livelib.mjs';
@@ -17,6 +18,7 @@ function createInitialBookDetailsStats() {
     skippedBookPageDetails: 0,
     enrichedBookDescriptions: 0,
     enrichedBookImages: 0,
+    enrichedBookGenres: 0,
   };
 }
 
@@ -24,6 +26,7 @@ function getMissingBookDetailsState(book) {
   return {
     hasDescription: hasRecordedBookPageDescription(book),
     hasImage: hasRecordedBookPageImage(book),
+    hasGenre: hasRecordedBookPageGenre(book),
     needsBookPageDetails: needsBookPageDetails(book),
   };
 }
@@ -92,7 +95,7 @@ export async function enrichBookWithMissingDetails(
   if (!bookDetailsState.needsBookPageDetails) {
     stats.skippedBookPageDetails += 1;
   } else if (nextBook.url && typeof fetchBookPage === 'function') {
-    let details = { description: null, image: null };
+    let details = { description: null, image: null, genre: null };
     try {
       const page = await fetchBookPage({ url: nextBook.url, book: nextBook });
       details = extractBookPageDetails(page?.html ?? '', page?.url ?? nextBook.url);
@@ -109,6 +112,10 @@ export async function enrichBookWithMissingDetails(
     if (!bookDetailsState.hasImage && details.image) {
       nextBook.image = details.image;
       stats.enrichedBookImages += 1;
+    }
+    if (!bookDetailsState.hasGenre && details.genre !== null) {
+      nextBook.genre = details.genre;
+      stats.enrichedBookGenres += 1;
     }
 
     if (pageDelayMs > 0) {
@@ -151,6 +158,7 @@ export {
   extractBookPageDetails,
   firstAudiobookUrlForBook,
   hasRecordedBookPageDescription,
+  hasRecordedBookPageGenre,
   hasRecordedBookPageImage,
   hasRecordedAudiobookDuration,
   needsBookPageDetails,

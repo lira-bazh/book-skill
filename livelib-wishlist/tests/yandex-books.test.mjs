@@ -15,13 +15,13 @@ import {
   normalizeYandexBooksUrl,
 } from '../scripts/lib/yandex-books.mjs';
 
-test('builds Yandex Books search query from title and authors', () => {
+test('builds Yandex Books search query from title only', () => {
   assert.equal(
     buildYandexBooksSearchQuery({
       title: '  Сто   лет   одиночества ',
       authors: [' Габриэль Гарсиа Маркес ', 'Габриэль Гарсиа Маркес'],
     }),
-    'Сто лет одиночества Габриэль Гарсиа Маркес',
+    'Сто лет одиночества',
   );
 });
 
@@ -360,8 +360,8 @@ test('enriches books with matching Yandex Books URLs', async () => {
   assert.deepEqual(
     calls.map((call) => [call.query, call.profileDir]),
     [
-      ['Сто лет одиночества Габриэль Гарсиа Маркес', '.browser-profile-test'],
-      ['Полковнику никто не пишет Габриэль Гарсиа Маркес', '.browser-profile-test'],
+      ['Сто лет одиночества', '.browser-profile-test'],
+      ['Полковнику никто не пишет', '.browser-profile-test'],
     ],
   );
   assert.deepEqual(enriched, [
@@ -493,7 +493,7 @@ test('reuses existing Yandex Books URLs and skips search for already enriched bo
     },
   });
 
-  assert.deepEqual(calls, ['Полковнику никто не пишет Габриэль Гарсиа Маркес']);
+  assert.deepEqual(calls, ['Полковнику никто не пишет']);
   assert.deepEqual(enriched, [
     {
       ...books[0],
@@ -571,9 +571,9 @@ test('waits between Yandex Books searches', async () => {
 
   assert.deepEqual(sleeps, [2000]);
   assert.deepEqual(calls, [
-    ['fetch', 'Сто лет одиночества Габриэль Гарсиа Маркес'],
+    ['fetch', 'Сто лет одиночества'],
     ['sleep', 2000],
-    ['fetch', 'Полковнику никто не пишет Габриэль Гарсиа Маркес'],
+    ['fetch', 'Полковнику никто не пишет'],
   ]);
 });
 
@@ -625,7 +625,7 @@ test('keeps enriching after a failed Yandex Books search', async () => {
 
   const enriched = await enrichBooksWithYandexBooksUrls(books, {
     async fetchSearchPage({ query }) {
-      if (query === 'Контакт Карл Саган') {
+      if (query === 'Контакт') {
         throw new Error('page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE');
       }
 
@@ -646,7 +646,7 @@ test('keeps enriching after a failed Yandex Books search', async () => {
 
   assert.deepEqual(errors, [[
     'Контакт',
-    'Контакт Карл Саган',
+    'Контакт',
     'page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE',
   ]]);
   assert.deepEqual(enriched, [
