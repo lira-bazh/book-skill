@@ -228,7 +228,7 @@ export function extractBooks(html, baseUrl) {
     const scope = container.length > 0 ? container : link.parent();
     const authors = scope.find('a.brow-book-author')
       .toArray()
-      .map((author) => cleanText($(author).text()))
+      .flatMap((author) => splitAuthorText($(author).text()))
       .filter(Boolean)
       .filter((author, index, values) => values.indexOf(author) === index);
 
@@ -237,6 +237,12 @@ export function extractBooks(html, baseUrl) {
   }
 
   return books;
+}
+
+function splitAuthorText(value) {
+  return cleanText(value)
+    .split(',')
+    .map((author) => cleanText(author));
 }
 
 export function extractBookPageDetails(html, baseUrl) {

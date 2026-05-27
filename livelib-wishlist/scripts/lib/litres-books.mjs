@@ -6,6 +6,11 @@ import {
   hasTokenOverlap,
   normalizeForMatch,
 } from './text-match.mjs';
+import { buildBookSearchQuery } from './book-search-query.mjs';
+import {
+  filterSearchResultsForBook,
+  isSearchResultSimilarToBook,
+} from './book-search-match.mjs';
 
 const LITRES_ITEM_PATH_RE = /^\/(?:book|audiobook)\/[^/]+(?:\/[^/]+)*$/;
 const NON_TITLE_TEXT_RE = /^(?:купить|читать|слушать|скачать|подробнее|в корзину|фрагмент|слушать фрагмент|читать онлайн|отложить|оценить|\d+(?:[.,]\d+)?\s*(?:₽|руб\.?|р\.?))$/i;
@@ -58,7 +63,7 @@ function normalizeLitresAuthorVariants(author) {
 }
 
 export function buildLitresSearchQuery(book) {
-  return cleanText(book?.title);
+  return buildBookSearchQuery(book);
 }
 
 export function buildLitresSearchUrl(query) {
@@ -215,47 +220,11 @@ export function extractLitresSearchResults(html, baseUrl = 'https://www.litres.r
 }
 
 export function isLitresResultSimilarToBook(result, book) {
-  if (!isSimilarLitresTitle(book?.title, result?.title)) {
-    return false;
-  }
-
-  const sourceAuthors = Array.isArray(book?.authors) ? book.authors.filter((author) => cleanText(author)) : [];
-  if (sourceAuthors.length === 0) {
-    return true;
-  }
-
-  const candidateAuthors = Array.isArray(result?.authors) ? result.authors.filter((author) => cleanText(author)) : [];
-  if (candidateAuthors.length === 0) {
-    return false;
-  }
-
-  return sourceAuthors.some((sourceAuthor) => (
-    candidateAuthors.some((candidateAuthor) => (
-      isSimilarLitresAuthor(sourceAuthor, candidateAuthor)
-    ))
-  ));
+  return isSearchResultSimilarToBook(result, book);
 }
 
 export function filterLitresResultsForBook(results, book, { maxResults = Infinity } = {}) {
-  const matched = [];
-  const seen = new Set();
-
-  for (const result of results) {
-    if (matched.length >= maxResults) {
-      break;
-    }
-
-    if (!result?.url || seen.has(result.url)) {
-      continue;
-    }
-
-    if (isLitresResultSimilarToBook(result, book)) {
-      seen.add(result.url);
-      matched.push(result);
-    }
-  }
-
-  return matched;
+  return filterSearchResultsForBook(results, book, { maxResults });
 }
 
 export function extractMatchingLitresUrls(

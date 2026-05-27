@@ -199,7 +199,7 @@ test('extracts book title, authors, and URL from a wishlist card', () => {
           The   First   Book
         </a>
         <a class="brow-book-author" href="/author/1">Author One</a>
-        <a class="brow-book-author" href="/author/2">Author Two</a>
+        <a class="brow-book-author" href="/author/2">Author Two, Author Three</a>
         <a class="brow-book-author" href="/author/2">Author Two</a>
         <a href="/book/100000-title/reviews">10 reviews</a>
       </div>
@@ -209,7 +209,7 @@ test('extracts book title, authors, and URL from a wishlist card', () => {
   assert.deepEqual(extractBooks(html, 'https://www.livelib.ru/reader/LiraLantan/wish'), [
     {
       title: 'The First Book',
-      authors: ['Author One', 'Author Two'],
+      authors: ['Author One', 'Author Two', 'Author Three'],
       url: 'https://www.livelib.ru/book/100000-title',
     },
   ]);

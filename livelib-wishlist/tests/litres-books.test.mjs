@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  buildLitresSearchQuery,
   buildLitresSearchUrl,
   countBooksWithExistingLitresUrls,
   enrichBooksWithLitresUrls,
@@ -13,16 +12,6 @@ import {
   isLitresResultSimilarToBook,
   normalizeLitresUrl,
 } from '../scripts/lib/litres-books.mjs';
-
-test('builds Litres search query from title only', () => {
-  assert.equal(
-    buildLitresSearchQuery({
-      title: '  Сто   лет   одиночества ',
-      authors: [' Габриэль Гарсиа Маркес ', 'Габриэль Гарсиа Маркес'],
-    }),
-    'Сто лет одиночества',
-  );
-});
 
 test('builds Litres search URL', () => {
   const searchUrl = new URL(buildLitresSearchUrl(' Сто лет одиночества  Маркес '));
@@ -192,9 +181,9 @@ test('matches Litres result by similar title and author', () => {
   );
 });
 
-test('matches Litres result when source title has collection format note', () => {
+test('matches Litres result when source title has suffix after dot', () => {
   const book = {
-    title: 'История моей жизни (сборник)',
+    title: 'История моей жизни. Сборник',
     authors: ['Хелен Келлер'],
   };
 

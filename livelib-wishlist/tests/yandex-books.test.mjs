@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  buildYandexBooksSearchQuery,
   buildYandexBooksSearchUrl,
   countBooksWithExistingYandexBooksUrls,
   enrichBooksWithYandexBooksUrls,
@@ -14,26 +13,6 @@ import {
   isYandexBooksResultSimilarToBook,
   normalizeYandexBooksUrl,
 } from '../scripts/lib/yandex-books.mjs';
-
-test('builds Yandex Books search query from title only', () => {
-  assert.equal(
-    buildYandexBooksSearchQuery({
-      title: '  Сто   лет   одиночества ',
-      authors: [' Габриэль Гарсиа Маркес ', 'Габриэль Гарсиа Маркес'],
-    }),
-    'Сто лет одиночества',
-  );
-});
-
-test('builds Yandex Books search query without authors', () => {
-  assert.equal(
-    buildYandexBooksSearchQuery({
-      title: 'В ночном саду',
-      authors: [],
-    }),
-    'В ночном саду',
-  );
-});
 
 test('builds Yandex Books search URL', () => {
   const searchUrl = new URL(buildYandexBooksSearchUrl(' Сто лет одиночества  Маркес '));
@@ -625,7 +604,7 @@ test('keeps enriching after a failed Yandex Books search', async () => {
 
   const enriched = await enrichBooksWithYandexBooksUrls(books, {
     async fetchSearchPage({ query }) {
-      if (query === 'Контакт') {
+      if (query === 'Контакт Саган') {
         throw new Error('page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE');
       }
 
@@ -646,7 +625,7 @@ test('keeps enriching after a failed Yandex Books search', async () => {
 
   assert.deepEqual(errors, [[
     'Контакт',
-    'Контакт',
+    'Контакт Саган',
     'page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE',
   ]]);
   assert.deepEqual(enriched, [

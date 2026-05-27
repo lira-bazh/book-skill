@@ -6,6 +6,11 @@ import {
   hasTokenOverlap,
   normalizeForMatch,
 } from './text-match.mjs';
+import { buildBookSearchQuery } from './book-search-query.mjs';
+import {
+  filterSearchResultsForBook,
+  isSearchResultSimilarToBook,
+} from './book-search-match.mjs';
 
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
 
@@ -85,7 +90,7 @@ function areAuthorNamePartsCompatible(fullNameParts, abbreviatedNameParts) {
 }
 
 export function buildYandexBooksSearchQuery(book) {
-  return cleanText(book?.title);
+  return buildBookSearchQuery(book);
 }
 
 export function buildYandexBooksSearchUrl(query) {
@@ -248,47 +253,11 @@ function findYandexBooksResultCard($, link, baseUrl) {
 }
 
 export function isYandexBooksResultSimilarToBook(result, book) {
-  if (!isSimilarYandexBooksTitle(book?.title, result?.title)) {
-    return false;
-  }
-
-  const sourceAuthors = Array.isArray(book?.authors) ? book.authors.filter((author) => cleanText(author)) : [];
-  if (sourceAuthors.length === 0) {
-    return true;
-  }
-
-  const candidateAuthors = Array.isArray(result?.authors) ? result.authors.filter((author) => cleanText(author)) : [];
-  if (candidateAuthors.length === 0) {
-    return false;
-  }
-
-  return sourceAuthors.some((sourceAuthor) => (
-    candidateAuthors.some((candidateAuthor) => (
-      isSimilarYandexBooksAuthor(sourceAuthor, candidateAuthor)
-    ))
-  ));
+  return isSearchResultSimilarToBook(result, book);
 }
 
 export function filterYandexBooksResultsForBook(results, book, { maxResults = Infinity } = {}) {
-  const matched = [];
-  const seen = new Set();
-
-  for (const result of results) {
-    if (matched.length >= maxResults) {
-      break;
-    }
-
-    if (!result?.url || seen.has(result.url)) {
-      continue;
-    }
-
-    if (isYandexBooksResultSimilarToBook(result, book)) {
-      seen.add(result.url);
-      matched.push(result);
-    }
-  }
-
-  return matched;
+  return filterSearchResultsForBook(results, book, { maxResults });
 }
 
 export function extractMatchingYandexBooksUrls(
