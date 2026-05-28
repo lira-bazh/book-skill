@@ -3,7 +3,6 @@
 import { createInterface } from "node:readline/promises";
 
 import {
-  firstAudiobookUrlForBook,
   hasRecordedAudiobookDuration
 } from "./lib/audiobook-duration.mjs";
 import { enrichBooksWithMissingDetails } from "./lib/book-details-enrichment.mjs";
@@ -55,7 +54,10 @@ function hasLitresUrls(book) {
 }
 
 function hasRutrackerUrls(book) {
-  return Array.isArray(book?.rutracker_urls) && book.rutracker_urls.length > 0;
+  return (
+    Array.isArray(book?.audiobooks_urls) &&
+    book.audiobooks_urls.some((url) => typeof url === "string" && url.includes("rutracker.org/"))
+  );
 }
 
 function parseArgs(argv) {
@@ -463,10 +465,10 @@ export async function main(
       `Enriched ${enrichedRutracker} book(s) with new RuTracker links`
     );
   }
-  if (ranAudiobookDurationEnrichment) {
-    const booksWithAudiobookUrls = books.filter((book) =>
-      firstAudiobookUrlForBook(book)
-    ).length;
+	  if (ranAudiobookDurationEnrichment) {
+	    const booksWithAudiobookUrls = books.filter(
+	      (book) => Array.isArray(book?.audiobooks_urls) && book.audiobooks_urls.length > 0
+	    ).length;
     const booksWithAudiobookDuration = books.filter(
       hasRecordedAudiobookDuration
     ).length;

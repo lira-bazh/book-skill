@@ -1,8 +1,10 @@
 import { load } from 'cheerio';
+import {
+  audiobookUrlsForBook,
+  isAudiobookUrl,
+} from './book-url-fields.mjs';
 
-export function isAudiobookUrl(rawUrl) {
-  return typeof rawUrl === 'string' && rawUrl.toLowerCase().includes('audiobook');
-}
+export { isAudiobookUrl };
 
 export function parseAudiobookDurationMinutes(value) {
   if (typeof value !== 'string') {
@@ -36,12 +38,7 @@ export function parseAudiobookDurationMinutes(value) {
 }
 
 export function firstAudiobookUrlForBook(book) {
-  const urls = [
-    ...(Array.isArray(book?.yandex_books_urls) ? book.yandex_books_urls : []),
-    ...(Array.isArray(book?.litres_urls) ? book.litres_urls : []),
-  ];
-
-  return urls.find((url) => isAudiobookUrl(url)) ?? null;
+  return audiobookUrlsForBook(book).find((url) => isAudiobookUrl(url)) ?? null;
 }
 
 export function hasRecordedAudiobookDuration(book) {

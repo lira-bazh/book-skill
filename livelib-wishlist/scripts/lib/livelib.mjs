@@ -27,6 +27,7 @@ const IMAGE_SELECTOR = [
 const GENRE_SELECTOR = '.bc-info__item';
 
 export class LiveLibAccessError extends Error {}
+export const LIVELIB_SOURCE_BOOK = Symbol('livelibSourceBook');
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -494,10 +495,19 @@ export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
 
 export function mergeExistingLiveLibBooks(livelibBooks, existingBooks = []) {
   return matchBooksByLiveLibUrl(livelibBooks, existingBooks).matched.map((match) => (
-    match.existingBook ?? {
+    match.existingBook ? bookWithLiveLibSource(match.existingBook, match.livelibBook) : {
       ...match.livelibBook,
       yandex_books_urls: [],
-      rutracker_urls: [],
+      audiobooks_urls: [],
     }
   ));
+}
+
+function bookWithLiveLibSource(existingBook, livelibBook) {
+  const book = { ...existingBook };
+  Object.defineProperty(book, LIVELIB_SOURCE_BOOK, {
+    value: livelibBook,
+  });
+
+  return book;
 }

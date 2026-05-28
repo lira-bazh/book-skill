@@ -7,10 +7,8 @@ import {
   normalizeForMatch,
 } from './text-match.mjs';
 import { buildBookSearchQuery } from './book-search-query.mjs';
-import {
-  filterSearchResultsForBook,
-  isSearchResultSimilarToBook,
-} from './book-search-match.mjs';
+import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
+import { LIVELIB_SOURCE_BOOK } from './livelib.mjs';
 
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
 const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
@@ -265,11 +263,43 @@ function findYandexBooksResultCard($, link, baseUrl) {
 }
 
 export function isYandexBooksResultSimilarToBook(result, book) {
-  return isSearchResultSimilarToBook(result, book);
+  return (
+    isSimilarYandexBooksTitle(book?.title, result?.title)
+    && hasSimilarYandexBooksAuthor(book?.authors, result?.authors)
+  );
 }
 
 export function filterYandexBooksResultsForBook(results, book, { maxResults = Infinity } = {}) {
-  return filterSearchResultsForBook(results, book, { maxResults });
+  const matched = [];
+  const seen = new Set();
+
+  for (const result of results) {
+    if (matched.length >= maxResults) {
+      break;
+    }
+
+    if (!result?.url || seen.has(result.url)) {
+      continue;
+    }
+
+    if (isYandexBooksResultSimilarToBook(result, book)) {
+      seen.add(result.url);
+      matched.push(result);
+    }
+  }
+
+  return matched;
+}
+
+function hasSimilarYandexBooksAuthor(sourceAuthors, candidateAuthors) {
+  const sources = Array.isArray(sourceAuthors) ? sourceAuthors : [];
+  const candidates = Array.isArray(candidateAuthors) ? candidateAuthors : [];
+
+  return sources.some((sourceAuthor) => (
+    candidates.some((candidateAuthor) => (
+      isSimilarYandexBooksAuthor(sourceAuthor, candidateAuthor)
+    ))
+  ));
 }
 
 export function extractMatchingYandexBooksUrls(
@@ -278,20 +308,40 @@ export function extractMatchingYandexBooksUrls(
   baseUrl = 'https://books.yandex.ru/',
   options = {},
 ) {
+  const results = extractYandexBooksSearchResults(html, baseUrl);
   return filterYandexBooksResultsForBook(
-    extractYandexBooksSearchResults(html, baseUrl),
+    results,
     book,
     options,
   ).map((result) => result.url);
 }
 
+function extractMatchingYandexBooksUrlsForMergedBook(
+  html,
+  book,
+  searchBook,
+  baseUrl,
+  options,
+) {
+  const results = extractYandexBooksSearchResults(html, baseUrl);
+  const matches = filterYandexBooksResultsForBook(results, searchBook, options);
+
+  if (matches.length > 0 || searchBook === book) {
+    return matches.map((result) => result.url);
+  }
+
+  return filterYandexBooksResultsForBook(results, book, options)
+    .map((result) => result.url);
+}
+
 function existingYandexBooksUrlsForBook(book, existingBooksByUrl) {
   const existingBook = existingBooksByUrl.get(book?.url);
-  if (!Array.isArray(existingBook?.yandex_books_urls) || existingBook.yandex_books_urls.length === 0) {
+  const { regularUrls } = splitAudiobookUrls(existingBook?.yandex_books_urls);
+  if (regularUrls.length === 0) {
     return null;
   }
 
-  return existingBook.yandex_books_urls;
+  return regularUrls;
 }
 
 export function countBooksWithExistingYandexBooksUrls(books, existingBooks = []) {
@@ -332,12 +382,24 @@ export async function enrichBooksWithYandexBooksUrls(
   let searchedBooks = 0;
 
   for (const book of books) {
+    const searchBook = book[LIVELIB_SOURCE_BOOK] ?? book;
     const existingYandexBooksUrls = existingYandexBooksUrlsForBook(book, existingBooksByUrl);
+    const existingYandexAudiobookUrls = splitAudiobookUrls(book.yandex_books_urls).audiobookUrls;
     if (existingYandexBooksUrls) {
-      enrichedBooks.push({
+      const mergedAudiobookUrls = mergeAudiobookUrls(book, existingYandexAudiobookUrls);
+      const enrichedBook = {
         ...book,
         yandex_books_urls: [...existingYandexBooksUrls],
-      });
+      };
+
+      if (
+        mergedAudiobookUrls.length > 0
+        || Object.prototype.hasOwnProperty.call(book, 'audiobooks_urls')
+      ) {
+        enrichedBook.audiobooks_urls = mergedAudiobookUrls;
+      }
+
+      enrichedBooks.push(enrichedBook);
       continue;
     }
 
@@ -345,7 +407,7 @@ export async function enrichBooksWithYandexBooksUrls(
       await sleep(delayMs);
     }
 
-    const query = buildYandexBooksSearchQuery(book);
+    const query = buildYandexBooksSearchQuery(searchBook);
     let searchPage;
     try {
       searchPage = await searchPageFetcher({
@@ -355,22 +417,49 @@ export async function enrichBooksWithYandexBooksUrls(
       });
     } catch (error) {
       onSearchError({ book, query, error });
-      enrichedBooks.push({
+      const mergedAudiobookUrls = mergeAudiobookUrls(book, existingYandexAudiobookUrls);
+      const enrichedBook = {
         ...book,
         yandex_books_urls: [],
-      });
+      };
+
+      if (
+        mergedAudiobookUrls.length > 0
+        || Object.prototype.hasOwnProperty.call(book, 'audiobooks_urls')
+      ) {
+        enrichedBook.audiobooks_urls = mergedAudiobookUrls;
+      }
+
+      enrichedBooks.push(enrichedBook);
       searchedBooks += 1;
       continue;
     }
 
-    const yandexBooksUrls = extractMatchingYandexBooksUrls(searchPage.html, book, searchPage.url, {
-      maxResults,
-    });
-
-    enrichedBooks.push({
+    const yandexBooksUrls = extractMatchingYandexBooksUrlsForMergedBook(
+      searchPage.html,
+      book,
+      searchBook,
+      searchPage.url,
+      { maxResults },
+    );
+    const { regularUrls, audiobookUrls } = splitAudiobookUrls(yandexBooksUrls);
+    const mergedAudiobookUrls = mergeAudiobookUrls(book, [
+      ...existingYandexAudiobookUrls,
+      ...audiobookUrls,
+    ]);
+    const enrichedBook = {
       ...book,
-      yandex_books_urls: yandexBooksUrls,
-    });
+      yandex_books_urls: regularUrls,
+    };
+
+    if (
+      mergedAudiobookUrls.length > 0
+      || Object.prototype.hasOwnProperty.call(book, 'audiobooks_urls')
+    ) {
+      enrichedBook.audiobooks_urls = mergedAudiobookUrls;
+    }
+
+    enrichedBooks.push(enrichedBook);
     searchedBooks += 1;
   }
 

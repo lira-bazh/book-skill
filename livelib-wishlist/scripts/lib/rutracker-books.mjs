@@ -1,6 +1,7 @@
 import { load } from "cheerio";
 
 import { buildBookSearchQuery } from "./book-search-query.mjs";
+import { mergeAudiobookUrls } from "./book-url-fields.mjs";
 import { cleanText, normalizeForMatch } from "./text-match.mjs";
 
 const RUTRACKER_HOSTNAME = "rutracker.org";
@@ -146,14 +147,19 @@ export function extractMatchingRutrackerUrls(
 
 function existingRutrackerUrlsForBook(book, existingBooksByUrl) {
   const existingBook = existingBooksByUrl.get(book?.url);
+  const urls = [
+    ...(Array.isArray(existingBook?.rutracker_urls) ? existingBook.rutracker_urls : []),
+    ...(Array.isArray(existingBook?.audiobooks_urls)
+      ? existingBook.audiobooks_urls.filter((url) => url.includes("rutracker.org/"))
+      : []),
+  ];
   if (
-    !Array.isArray(existingBook?.rutracker_urls) ||
-    existingBook.rutracker_urls.length === 0
+    urls.length === 0
   ) {
     return null;
   }
 
-  return existingBook.rutracker_urls;
+  return urls;
 }
 
 export function countBooksWithExistingRutrackerUrls(books, existingBooks = []) {
@@ -188,21 +194,25 @@ export async function enrichBooksWithRutrackerUrls(
   const enrichedBooks = [];
 
   for (const book of books) {
+    const { rutracker_urls: _legacyRutrackerUrls, ...bookWithoutRutrackerUrls } = book;
     const existingRutrackerUrls = existingRutrackerUrlsForBook(
       book,
       existingBooksByUrl
     );
     if (existingRutrackerUrls) {
       enrichedBooks.push({
-        ...book,
-        rutracker_urls: [...existingRutrackerUrls]
+        ...bookWithoutRutrackerUrls,
+        audiobooks_urls: mergeAudiobookUrls(book, existingRutrackerUrls)
       });
       continue;
     }
 
     const query = buildRutrackerSearchQuery(book);
     if (!query) {
-      enrichedBooks.push({ ...book, rutracker_urls: [] });
+      enrichedBooks.push({
+        ...bookWithoutRutrackerUrls,
+        audiobooks_urls: mergeAudiobookUrls(book, [])
+      });
       continue;
     }
 
@@ -223,14 +233,17 @@ export async function enrichBooksWithRutrackerUrls(
       );
 
       enrichedBooks.push({
-        ...book,
-        rutracker_urls: rutrackerUrls
+        ...bookWithoutRutrackerUrls,
+        audiobooks_urls: mergeAudiobookUrls(book, rutrackerUrls)
       });
     } catch (error) {
       if (typeof onSearchError === "function") {
         onSearchError({ book, error });
       }
-      enrichedBooks.push({ ...book, rutracker_urls: [] });
+      enrichedBooks.push({
+        ...bookWithoutRutrackerUrls,
+        audiobooks_urls: mergeAudiobookUrls(book, [])
+      });
     }
 
     if (delayMs > 0) {

@@ -11,6 +11,7 @@ import {
   filterSearchResultsForBook,
   isSearchResultSimilarToBook,
 } from './book-search-match.mjs';
+import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
 
 const LITRES_ITEM_PATH_RE = /^\/(?:book|audiobook)\/[^/]+(?:\/[^/]+)*$/;
 const NON_TITLE_TEXT_RE = /^(?:купить|читать|слушать|скачать|подробнее|в корзину|фрагмент|слушать фрагмент|читать онлайн|отложить|оценить|\d+(?:[.,]\d+)?\s*(?:₽|руб\.?|р\.?))$/i;
@@ -242,11 +243,12 @@ export function extractMatchingLitresUrls(
 
 function existingLitresUrlsForBook(book, existingBooksByUrl) {
   const existingBook = existingBooksByUrl.get(book?.url);
-  if (!Array.isArray(existingBook?.litres_urls) || existingBook.litres_urls.length === 0) {
+  const { regularUrls } = splitAudiobookUrls(existingBook?.litres_urls);
+  if (regularUrls.length === 0) {
     return null;
   }
 
-  return existingBook.litres_urls;
+  return regularUrls;
 }
 
 export function countBooksWithExistingLitresUrls(books, existingBooks = []) {
@@ -289,14 +291,23 @@ export async function enrichBooksWithLitresUrls(
 
   for (const book of books) {
     const existingLitresUrls = existingLitresUrlsForBook(book, existingBooksByUrl);
+    const existingLitresAudiobookUrls = splitAudiobookUrls(book.litres_urls).audiobookUrls;
     if (existingLitresUrls) {
-      enrichedBooks.push({ ...book, litres_urls: existingLitresUrls });
+      enrichedBooks.push({
+        ...book,
+        litres_urls: existingLitresUrls,
+        audiobooks_urls: mergeAudiobookUrls(book, existingLitresAudiobookUrls),
+      });
       continue;
     }
 
     const query = buildLitresSearchQuery(book);
     if (!query) {
-      enrichedBooks.push({ ...book, litres_urls: [] });
+      enrichedBooks.push({
+        ...book,
+        litres_urls: [],
+        audiobooks_urls: mergeAudiobookUrls(book, existingLitresAudiobookUrls),
+      });
       continue;
     }
 
@@ -319,7 +330,15 @@ export async function enrichBooksWithLitresUrls(
       onSearchError({ book, query, searchUrl, error });
     }
 
-    enrichedBooks.push({ ...book, litres_urls: litresUrls });
+    const { regularUrls, audiobookUrls } = splitAudiobookUrls(litresUrls);
+    enrichedBooks.push({
+      ...book,
+      litres_urls: regularUrls,
+      audiobooks_urls: mergeAudiobookUrls(book, [
+        ...existingLitresAudiobookUrls,
+        ...audiobookUrls,
+      ]),
+    });
 
     if (delayMs > 0) {
       await sleep(delayMs);
