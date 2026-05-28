@@ -130,6 +130,36 @@ test('extracts Yandex Books search results with title, authors, and URL', () => 
   );
 });
 
+test('extracts Yandex Books authors without et al marker', () => {
+  const html = `
+    <div data-test-id="SNIPPET">
+      <a href="/books/SunPendulum">Под маятником солнца</a>
+      <a data-test-id="SNIPPET_AUTHORS" href="/authors/will-ing">Уилл Инг и др.</a>
+    </div>
+    <article>
+      <a href="/audiobooks/SunPendulumAudio">Под маятником солнца</a>
+      <a href="/authors/will-ing">Уилл Инг</a>
+      <a href="/authors/others">др.</a>
+    </article>
+  `;
+
+  assert.deepEqual(
+    extractYandexBooksSearchResults(html, 'https://books.yandex.ru/search/all/test'),
+    [
+      {
+        title: 'Под маятником солнца',
+        authors: ['Уилл Инг'],
+        url: 'https://books.yandex.ru/books/SunPendulum',
+      },
+      {
+        title: 'Под маятником солнца',
+        authors: ['Уилл Инг'],
+        url: 'https://books.yandex.ru/audiobooks/SunPendulumAudio',
+      },
+    ],
+  );
+});
+
 test('extracts Yandex Books search results from generic result cards', () => {
   const html = `
     <main>

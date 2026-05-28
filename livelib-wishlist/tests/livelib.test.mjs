@@ -575,6 +575,7 @@ test('keeps existing file data for books still present on LiveLib', () => {
       url: 'https://www.livelib.ru/book/100000',
       livelib_note: 'keep me',
       yandex_books_urls: ['https://books.yandex.ru/books/existing'],
+      rutracker_urls: ['https://rutracker.org/forum/viewtopic.php?t=100000'],
     },
   ];
 
@@ -583,11 +584,12 @@ test('keeps existing file data for books still present on LiveLib', () => {
     {
       ...livelibBooks[1],
       yandex_books_urls: [],
+      rutracker_urls: [],
     },
   ]);
 });
 
-test('adds an empty Yandex Books URL array for new LiveLib books', () => {
+test('adds empty search URL arrays for new LiveLib books', () => {
   const livelibBooks = [
     {
       title: 'New Book',
@@ -602,6 +604,7 @@ test('adds an empty Yandex Books URL array for new LiveLib books', () => {
       authors: ['New Author'],
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: [],
+      rutracker_urls: [],
     },
   ]);
 });
@@ -658,12 +661,14 @@ test('keeps current LiveLib order while merging existing books', () => {
       authors: ['Old Author One'],
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: ['https://books.yandex.ru/books/one'],
+      rutracker_urls: ['https://rutracker.org/forum/viewtopic.php?t=100000'],
     },
     {
       title: 'Book Two from file',
       authors: ['Old Author Two'],
       url: 'https://www.livelib.ru/book/200000',
       yandex_books_urls: ['https://books.yandex.ru/books/two'],
+      rutracker_urls: ['https://rutracker.org/forum/viewtopic.php?t=200000'],
     },
   ];
 
@@ -673,6 +678,7 @@ test('keeps current LiveLib order while merging existing books', () => {
     {
       ...livelibBooks[2],
       yandex_books_urls: [],
+      rutracker_urls: [],
     },
   ]);
 });

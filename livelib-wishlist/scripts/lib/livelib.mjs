@@ -489,6 +489,7 @@ export function mergeExistingLiveLibBooks(livelibBooks, existingBooks = []) {
     match.existingBook ?? {
       ...match.livelibBook,
       yandex_books_urls: [],
+      rutracker_urls: [],
     }
   ));
 }

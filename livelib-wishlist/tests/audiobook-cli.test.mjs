@@ -76,6 +76,7 @@ test('main enriches audiobook duration after finding audiobook links', async (t)
       authors: ['Габриэль Гарсиа Маркес'],
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: ['https://books.yandex.ru/audiobooks/RuLNt8od'],
+      rutracker_urls: [],
       audiobook_duration_minutes: 515,
     },
   ]);

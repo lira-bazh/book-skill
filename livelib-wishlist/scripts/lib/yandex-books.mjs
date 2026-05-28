@@ -13,6 +13,7 @@ import {
 } from './book-search-match.mjs';
 
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
+const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
 
 export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {
   const source = normalizeForMatch(sourceTitle);
@@ -220,16 +221,20 @@ function extractYandexBooksResultTitle($, link, card, baseUrl) {
 function extractYandexBooksAuthors($, container) {
   const explicitAuthors = container.find('[data-test-id="SNIPPET_AUTHORS"]')
     .toArray()
-    .map((author) => cleanText($(author).text()))
+    .map((author) => cleanYandexBooksAuthorName($(author).text()))
     .filter(Boolean);
   const authors = explicitAuthors.length > 0
     ? explicitAuthors
     : container.find('a[href*="/authors/"]')
       .toArray()
-      .map((author) => cleanText($(author).text()))
+      .map((author) => cleanYandexBooksAuthorName($(author).text()))
       .filter(Boolean);
 
   return authors.filter((author, index) => authors.indexOf(author) === index);
+}
+
+function cleanYandexBooksAuthorName(author) {
+  return cleanText(author).replace(YANDEX_BOOKS_ET_AL_RE, '').trim();
 }
 
 function findYandexBooksResultCard($, link, baseUrl) {

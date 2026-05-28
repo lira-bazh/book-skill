@@ -9,6 +9,7 @@ import {
   normalizeBookUrl,
 } from './livelib.mjs';
 import { buildLitresSearchUrl } from './litres-books.mjs';
+import { buildRutrackerSearchUrl } from './rutracker-books.mjs';
 import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
 import { isAudiobookUrl } from './audiobook-duration.mjs';
 import { cleanText } from './text-match.mjs';
@@ -83,6 +84,17 @@ export async function fetchLitresSearchPageWithBrowser({
   ));
 }
 
+export async function fetchRutrackerSearchPageWithBrowser({
+  query,
+  searchUrl,
+  profileDir = DEFAULT_PROFILE_DIR,
+  playwright,
+}) {
+  return withBrowserSession({ profileDir, playwright }, ({ fetchRutrackerSearchPage }) => (
+    fetchRutrackerSearchPage({ query, searchUrl })
+  ));
+}
+
 export async function fetchAudiobookPageWithBrowser({
   url,
   profileDir = DEFAULT_PROFILE_DIR,
@@ -119,6 +131,18 @@ async function fetchLitresSearchPageWithPage(page, { query, searchUrl }) {
 
   await gotoWithRetry(page, targetUrl);
   await waitForLitresSearchResults(page);
+  return {
+    query: normalizedQuery,
+    url: page.url(),
+    html: await page.content(),
+  };
+}
+
+async function fetchRutrackerSearchPageWithPage(page, { query, searchUrl }) {
+  const normalizedQuery = cleanText(query);
+  const targetUrl = searchUrl ?? buildRutrackerSearchUrl(normalizedQuery);
+
+  await gotoWithRetry(page, targetUrl);
   return {
     query: normalizedQuery,
     url: page.url(),
@@ -265,10 +289,18 @@ export async function withBrowserSession({
       fetchWishlistPages: (options) => fetchWishlistPagesWithPage(page, options),
       fetchYandexBooksSearchPage: (options) => fetchYandexBooksSearchPageWithPage(page, options),
       fetchLitresSearchPage: (options) => fetchLitresSearchPageWithPage(page, options),
+      fetchRutrackerSearchPage: (options) => fetchRutrackerSearchPageWithPage(page, options),
       fetchAudiobookPage: (options) => fetchAudiobookPageWithPage(page, options),
       fetchBookPage: (options) => fetchBookPageWithPage(page, options),
       openLitresHome: async () => {
         await gotoWithRetry(page, 'https://www.litres.ru/');
+        return {
+          url: page.url(),
+          html: await page.content(),
+        };
+      },
+      openRutrackerHome: async () => {
+        await gotoWithRetry(page, 'https://rutracker.org/forum/index.php');
         return {
           url: page.url(),
           html: await page.content(),

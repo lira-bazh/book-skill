@@ -8,6 +8,7 @@ import {
   DEFAULT_NAVIGATION_TIMEOUT_MS,
   fetchBookPageWithBrowser,
   fetchLitresSearchPageWithBrowser,
+  fetchRutrackerSearchPageWithBrowser,
   fetchWishlistPagesWithBrowser,
   fetchYandexBooksSearchPageWithBrowser,
   resolveProfileDir,
@@ -200,6 +201,62 @@ test('browser mode opens Litres search page with persistent profile', async () =
   assert.equal(closed, true);
 });
 
+test('browser mode opens RuTracker search page with persistent profile', async () => {
+  const calls = [];
+  let closed = false;
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url, options) {
+      currentUrl = url;
+      calls.push(['goto', url, options]);
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return '<html><body>rutracker search</body></html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext(profileDir, options) {
+        calls.push(['launchPersistentContext', profileDir, options]);
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {
+            closed = true;
+          },
+        };
+      },
+    },
+  };
+
+  const result = await fetchRutrackerSearchPageWithBrowser({
+    query: 'Сто лет одиночества Маркес',
+    profileDir: '.browser-profile-test',
+    playwright: fakePlaywright,
+  });
+  const openedUrl = new URL(result.url);
+
+  assert.equal(result.query, 'Сто лет одиночества Маркес');
+  assert.equal(result.html, '<html><body>rutracker search</body></html>');
+  assert.equal(calls[0][0], 'launchPersistentContext');
+  assert.match(calls[0][1], /\.browser-profile-test$/);
+  assert.deepEqual(calls[0][2], { headless: false });
+  assert.deepEqual(calls[1][2], {
+    waitUntil: 'domcontentloaded',
+    timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
+  });
+  assert.equal(openedUrl.origin, 'https://rutracker.org');
+  assert.equal(openedUrl.pathname, '/forum/tracker.php');
+  assert.equal(openedUrl.searchParams.get('nm'), 'Сто лет одиночества Маркес');
+  assert.equal(closed, true);
+});
+
 test('browser session opens one context and reuses one page for all fetchers', async () => {
   const visited = [];
   let launchCount = 0;
@@ -262,11 +319,21 @@ test('browser session opens one context and reuses one page for all fetchers', a
     const litresPage = await session.fetchLitresSearchPage({
       query: 'Book One Author One',
     });
+    await session.openRutrackerHome();
+    const rutrackerPage = await session.fetchRutrackerSearchPage({
+      query: 'Book One Author One',
+    });
     const bookPage = await session.fetchBookPage({
       url: 'https://www.livelib.ru/book/100000',
     });
 
-    return { wishlistPages, yandexPage, litresPage, bookPage };
+    return {
+      wishlistPages,
+      yandexPage,
+      litresPage,
+      rutrackerPage,
+      bookPage,
+    };
   });
 
   assert.equal(launchCount, 1);
@@ -277,6 +344,8 @@ test('browser session opens one context and reuses one page for all fetchers', a
     'https://books.yandex.ru/search/all/Book%20One%20Author%20One',
     'https://www.litres.ru/',
     'https://www.litres.ru/search/?q=Book+One+Author+One',
+    'https://rutracker.org/forum/index.php',
+    'https://rutracker.org/forum/tracker.php?nm=Book+One+Author+One',
     'https://www.livelib.ru/book/100000',
   ]);
   assert.equal(result.wishlistPages.length, 1);
@@ -287,6 +356,10 @@ test('browser session opens one context and reuses one page for all fetchers', a
   assert.equal(
     result.litresPage.url,
     'https://www.litres.ru/search/?q=Book+One+Author+One',
+  );
+  assert.equal(
+    result.rutrackerPage.url,
+    'https://rutracker.org/forum/tracker.php?nm=Book+One+Author+One',
   );
   assert.equal(result.bookPage.url, 'https://www.livelib.ru/book/100000');
 });

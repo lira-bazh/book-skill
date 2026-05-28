@@ -117,6 +117,7 @@ test('main writes merged LiveLib updates back to the same output JSON', async (t
       authors: ['Author Two'],
       url: 'https://www.livelib.ru/book/200000',
       yandex_books_urls: [],
+      rutracker_urls: [],
     },
   ]);
 });
@@ -179,6 +180,7 @@ test('main enriches LiveLib book page details before writing output JSON', async
       authors: ['Author One'],
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: [],
+      rutracker_urls: [],
       description: 'Book One description',
       image: 'https://www.livelib.ru/covers/book-one.jpg',
       genre: 'фантастика',
@@ -324,6 +326,7 @@ test('main saves matching Yandex Books URLs when enrichment is enabled', async (
       authors: ['Габриэль Гарсиа Маркес'],
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
+      rutracker_urls: [],
     },
   ]);
   assert.ok(logs.includes('Found Yandex Books links for 1 book(s)'));
@@ -490,6 +493,7 @@ test('main reports Yandex enrichment warnings and keeps writing output JSON', as
       authors: ['Author One'],
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: [],
+      rutracker_urls: [],
     },
   ]);
 });
@@ -582,6 +586,7 @@ test('main reuses existing Yandex Books URLs and searches only missing books', a
       authors: ['Габриэль Гарсиа Маркес'],
       url: 'https://www.livelib.ru/book/200000',
       yandex_books_urls: ['https://books.yandex.ru/books/Eyxip4ae'],
+      rutracker_urls: [],
     },
   ]);
 });
@@ -720,6 +725,7 @@ test('main saves matching Litres URLs with injected fetcher', async (t) => {
       authors: ['Габриэль Гарсиа Маркес'],
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: [],
+      rutracker_urls: [],
       litres_urls: ['https://www.litres.ru/book/gabriel-garsia-markes/sto-let-odinochestva-123'],
     },
   ]);
@@ -792,6 +798,24 @@ test('main browser workflow uses one shared browser session', async (t) => {
               `,
             };
           },
+          async openRutrackerHome() {
+            events.push(['rutracker-home']);
+          },
+          async fetchRutrackerSearchPage() {
+            events.push(['rutracker-search']);
+            return {
+              url: 'https://rutracker.org/forum/tracker.php?nm=test',
+              html: `
+                <table>
+                  <tr>
+                    <td class="t-title-col">
+                      <a href="viewtopic.php?t=123">Сто лет одиночества MP3</a>
+                    </td>
+                  </tr>
+                </table>
+              `,
+            };
+          },
         };
 
         return callback(session);
@@ -799,8 +823,12 @@ test('main browser workflow uses one shared browser session', async (t) => {
       async confirmLitresLogin() {
         events.push(['litres-confirm']);
       },
+      async confirmRutrackerLogin() {
+        events.push(['rutracker-confirm']);
+      },
       async yandexSleep() {},
       async litresSleep() {},
+      async rutrackerSleep() {},
     },
   );
   const saved = JSON.parse(await readFile(outPath, 'utf8'));
@@ -813,6 +841,9 @@ test('main browser workflow uses one shared browser session', async (t) => {
     ['litres-home'],
     ['litres-confirm'],
     ['litres-search'],
+    ['rutracker-home'],
+    ['rutracker-confirm'],
+    ['rutracker-search'],
   ]);
   assert.deepEqual(saved, [
     {
@@ -821,6 +852,7 @@ test('main browser workflow uses one shared browser session', async (t) => {
       url: 'https://www.livelib.ru/book/100000',
       yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
       litres_urls: ['https://www.litres.ru/book/gabriel-garsia-markes/sto-let-odinochestva-123'],
+      rutracker_urls: ['https://rutracker.org/forum/viewtopic.php?t=123'],
     },
   ]);
 });
@@ -906,6 +938,24 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
               `,
             };
           },
+          async openRutrackerHome() {
+            events.push(['rutracker-home']);
+          },
+          async fetchRutrackerSearchPage() {
+            events.push(['rutracker']);
+            return {
+              url: 'https://rutracker.org/forum/tracker.php?nm=test',
+              html: `
+                <table>
+                  <tr>
+                    <td class="t-title-col">
+                      <a href="viewtopic.php?t=456">Existing Title Author MP3</a>
+                    </td>
+                  </tr>
+                </table>
+              `,
+            };
+          },
           async fetchAudiobookPage({ url }) {
             events.push(['details-audio', url]);
             return {
@@ -934,6 +984,9 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
       async confirmLitresLogin() {
         events.push(['litres-confirm']);
       },
+      async confirmRutrackerLogin() {
+        events.push(['rutracker-confirm']);
+      },
       async writeBooksJsonFn(path, books) {
         events.push(['json-write', path]);
         savedBooks = books;
@@ -941,6 +994,7 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
       },
       async yandexSleep() {},
       async litresSleep() {},
+      async rutrackerSleep() {},
       async audiobookSleep() {},
       async bookPageSleep() {},
     },
@@ -956,6 +1010,9 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
     ['litres-home'],
     ['litres-confirm'],
     ['litres'],
+    ['rutracker-home'],
+    ['rutracker-confirm'],
+    ['rutracker'],
     ['details-audio', 'https://www.litres.ru/audiobook/existing-author/existing-title-123'],
     ['details-book', 'https://www.livelib.ru/book/100000'],
     ['json-write', outPath],
@@ -968,6 +1025,7 @@ test('main browser workflow keeps JSON read, session work, and JSON write order'
       keep: 'from-json',
       yandex_books_urls: ['https://books.yandex.ru/books/RuLNt8od'],
       litres_urls: ['https://www.litres.ru/audiobook/existing-author/existing-title-123'],
+      rutracker_urls: ['https://rutracker.org/forum/viewtopic.php?t=456'],
       audiobook_duration_minutes: 80,
       description: 'Existing description',
       image: 'https://www.livelib.ru/covers/existing.jpg',
