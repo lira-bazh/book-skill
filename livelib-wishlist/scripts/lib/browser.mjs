@@ -43,6 +43,21 @@ function isRetriableNavigationError(error) {
     || message.includes('Timeout');
 }
 
+function responseStatus(response) {
+  return typeof response?.status === 'function' ? response.status() : null;
+}
+
+function isUnsuccessfulResponse(response) {
+  if (!response) {
+    return false;
+  }
+  return typeof response.ok === 'function' ? !response.ok() : false;
+}
+
+function createRetriableResponseError(url, status) {
+  return new Error(`Navigation to ${url} returned unsuccessful HTTP status ${status}`);
+}
+
 function isLiveLibRateLimitCaptchaUrl(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
@@ -56,14 +71,25 @@ function isLiveLibRateLimitCaptchaUrl(rawUrl) {
 async function gotoWithRetry(page, url, {
   attempts = DEFAULT_NAVIGATION_ATTEMPTS,
   retryDelayMs = DEFAULT_PAGE_DELAY_MS,
+  shouldRetryResponse,
 } = {}) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await page.goto(url, {
+      const response = await page.goto(url, {
         waitUntil: 'domcontentloaded',
         timeout: DEFAULT_NAVIGATION_TIMEOUT_MS,
       });
+      const status = responseStatus(response);
+      if (typeof shouldRetryResponse !== 'function' || !shouldRetryResponse(response)) {
+        return response;
+      }
+
+      lastError = createRetriableResponseError(url, status);
+      if (attempt >= attempts) {
+        break;
+      }
+      await sleep(retryDelayMs);
     } catch (error) {
       lastError = error;
       if (attempt >= attempts || !isRetriableNavigationError(error)) {
@@ -73,6 +99,12 @@ async function gotoWithRetry(page, url, {
     }
   }
   throw lastError;
+}
+
+async function gotoRutrackerWithRetry(page, url) {
+  return gotoWithRetry(page, url, {
+    shouldRetryResponse: isUnsuccessfulResponse,
+  });
 }
 
 async function waitForLiveLibAccessChallenge(page, {
@@ -255,7 +287,7 @@ async function fetchRutrackerSearchPageWithPage(page, { query, searchUrl }) {
   const normalizedQuery = cleanText(query);
   const targetUrl = searchUrl ?? buildRutrackerSearchUrl(normalizedQuery);
 
-  await gotoWithRetry(page, targetUrl);
+  await gotoRutrackerWithRetry(page, targetUrl);
   return {
     query: normalizedQuery,
     url: page.url(),
@@ -268,7 +300,11 @@ async function fetchAudiobookPageWithPage(page, { url }) {
     throw new Error('Audiobook page URL must be an audiobook or RuTracker topic URL');
   }
 
-  await gotoWithRetry(page, url);
+  await (
+    isRutrackerUrl(url)
+      ? gotoRutrackerWithRetry(page, url)
+      : gotoWithRetry(page, url)
+  );
   return {
     url: page.url(),
     html: await page.content(),
@@ -446,7 +482,7 @@ export async function withBrowserSession({
         };
       },
       openRutrackerHome: async () => {
-        await gotoWithRetry(page, 'https://rutracker.org/forum/index.php');
+        await gotoRutrackerWithRetry(page, 'https://rutracker.org/forum/index.php');
         const isAuthenticated = await isRutrackerAuthenticated(page);
         return {
           url: page.url(),

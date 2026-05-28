@@ -18,7 +18,9 @@ export function extractRutrackerAudiobookDurationText(html) {
 }
 
 export function extractRutrackerAudiobookNarrator(html) {
-  return extractRutrackerAudiobookNarratorFromTopicTitle(html) ?? extractLabeledPageTextValue(html, [RUTRACKER_NARRATOR_LABEL], {
+  return extractRutrackerAudiobookNarratorFromPostBody(html)
+    ?? extractRutrackerAudiobookNarratorFromTopicTitle(html)
+    ?? extractLabeledPageTextValue(html, [RUTRACKER_NARRATOR_LABEL], {
     stopLabels: [RUTRACKER_NARRATOR_LABEL, RUTRACKER_DURATION_LABEL]
   });
 }
@@ -35,6 +37,43 @@ function extractRutrackerDurationTimeAfterLabel(html) {
   }
 
   return text.slice(labelIndex).match(RUTRACKER_DURATION_TIME_RE)?.[0] ?? null;
+}
+
+function extractRutrackerAudiobookNarratorFromPostBody(html) {
+  if (typeof html !== "string" || !html.trim()) {
+    return null;
+  }
+
+  const $ = load(html);
+  const firstPost = $(".post_body").first();
+  if (firstPost.length === 0) {
+    return null;
+  }
+
+  const label = firstPost
+    .find(".post-b")
+    .toArray()
+    .find((element) => cleanText($(element).text()).replace(/:$/u, "") === RUTRACKER_NARRATOR_LABEL);
+  if (!label) {
+    return null;
+  }
+
+  const parts = [];
+  let sibling = label.nextSibling;
+  while (sibling) {
+    const node = $(sibling);
+    if (sibling.type === "tag" && sibling.name === "br") {
+      break;
+    }
+    if (sibling.type === "tag" && node.hasClass("post-b")) {
+      break;
+    }
+
+    parts.push(node.text());
+    sibling = sibling.nextSibling;
+  }
+
+  return cleanText(parts.join(" ").replace(/^:/u, "")) || null;
 }
 
 function extractRutrackerAudiobookNarratorFromTopicTitle(html) {
