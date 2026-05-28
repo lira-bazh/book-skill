@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 
+import { extractLabeledPageTextValue } from './audiobook-page-fields.mjs';
 import {
   cleanText,
   extractHrefValues,
@@ -12,6 +13,11 @@ import { LIVELIB_SOURCE_BOOK } from './livelib.mjs';
 
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
 const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
+const YANDEX_BOOKS_NARRATOR_LABEL = 'Рассказчик';
+
+export function extractYandexBooksAudiobookNarrator(html) {
+  return extractLabeledPageTextValue(html, [YANDEX_BOOKS_NARRATOR_LABEL]);
+}
 
 export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {
   const source = normalizeForMatch(sourceTitle);

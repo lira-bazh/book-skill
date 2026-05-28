@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 
+import { extractLabeledPageTextValue } from './audiobook-page-fields.mjs';
 import {
   cleanText,
   extractHrefValues,
@@ -18,6 +19,30 @@ const NON_TITLE_TEXT_RE = /^(?:купить|читать|слушать|скач
 const TITLE_FORMAT_NOTE_RE = /\s*\((?:сборник)\)\s*/giu;
 const AUTHOR_ET_AL_RE = /(?:^|[\s,;])и\s+др\.?$/iu;
 const AUTHOR_SEPARATOR_RE = /\s*(?:[,;]|\s+[&+]\s+)\s*/u;
+const LITRES_NARRATOR_LABEL = 'Чтец';
+const LITRES_READER_DETAILS_TEST_ID = 'art__reader--details';
+const LITRES_PERSON_NAME_LINK_TEST_ID = 'art__personName--link';
+
+export function extractLitresAudiobookNarrator(html) {
+  return extractLitresAudiobookNarratorFromReaderDetails(html)
+    ?? extractLabeledPageTextValue(html, [LITRES_NARRATOR_LABEL]);
+}
+
+function extractLitresAudiobookNarratorFromReaderDetails(html) {
+  if (typeof html !== 'string' || !html.trim()) {
+    return null;
+  }
+
+  const $ = load(html);
+  const narratorNames = $(`[data-testid="${LITRES_READER_DETAILS_TEST_ID}"]`)
+    .find(`[data-testid="${LITRES_PERSON_NAME_LINK_TEST_ID}"]`)
+    .toArray()
+    .map((element) => cleanText($(element).text()))
+    .filter(Boolean)
+    .filter((name, index, names) => names.indexOf(name) === index);
+
+  return narratorNames.length > 0 ? narratorNames.join(', ') : null;
+}
 
 function normalizeLitresTitleForMatch(title) {
   return normalizeForMatch(cleanText(title).replace(TITLE_FORMAT_NOTE_RE, ' '));

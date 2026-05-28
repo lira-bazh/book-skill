@@ -11,7 +11,7 @@ import {
 import { buildLitresSearchUrl } from './litres-books.mjs';
 import { buildRutrackerSearchUrl } from './rutracker-books.mjs';
 import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
-import { isAudiobookUrl } from './audiobook-duration.mjs';
+import { isAudiobookUrl, isRutrackerUrl } from './book-url-fields.mjs';
 import { cleanText } from './text-match.mjs';
 
 export const DEFAULT_MAX_PAGES = 50;
@@ -264,8 +264,8 @@ async function fetchRutrackerSearchPageWithPage(page, { query, searchUrl }) {
 }
 
 async function fetchAudiobookPageWithPage(page, { url }) {
-  if (!isAudiobookUrl(url)) {
-    throw new Error('Audiobook page URL must contain audiobook');
+  if (!isAudiobookUrl(url) && !isRutrackerUrl(url)) {
+    throw new Error('Audiobook page URL must be an audiobook or RuTracker topic URL');
   }
 
   await gotoWithRetry(page, url);

@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 
+import { normalizeBookAudiobookUrls } from './book-url-fields.mjs';
 import { cleanText, extractHrefValues } from './text-match.mjs';
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
@@ -328,7 +329,7 @@ export async function enrichBooksWithBookPageDetails(
     if (!hasRecordedBookPageImage(enrichedBook) && details.image) {
       enrichedBook.image = details.image;
     }
-    if (!hasRecordedBookPageGenre(enrichedBook) && details.genre !== null) {
+    if (!hasRecordedBookPageGenre(enrichedBook)) {
       enrichedBook.genre = details.genre;
     }
 
@@ -495,7 +496,10 @@ export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
 
 export function mergeExistingLiveLibBooks(livelibBooks, existingBooks = []) {
   return matchBooksByLiveLibUrl(livelibBooks, existingBooks).matched.map((match) => (
-    match.existingBook ? bookWithLiveLibSource(match.existingBook, match.livelibBook) : {
+    match.existingBook ? bookWithLiveLibSource(
+      normalizeBookAudiobookUrls(match.existingBook),
+      match.livelibBook,
+    ) : {
       ...match.livelibBook,
       yandex_books_urls: [],
       audiobooks_urls: [],

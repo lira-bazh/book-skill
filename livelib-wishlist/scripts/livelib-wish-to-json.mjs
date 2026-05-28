@@ -6,6 +6,7 @@ import {
   hasRecordedAudiobookDuration
 } from "./lib/audiobook-duration.mjs";
 import { enrichBooksWithMissingDetails } from "./lib/book-details-enrichment.mjs";
+import { isRutrackerUrl } from "./lib/book-url-fields.mjs";
 import {
   DEFAULT_MAX_PAGES,
   fetchYandexBooksSearchPageWithBrowser,
@@ -20,9 +21,6 @@ import {
 } from "./lib/json-output.mjs";
 import {
   extractBooksFromPages,
-  hasRecordedBookPageDescription,
-  hasRecordedBookPageGenre,
-  hasRecordedBookPageImage,
   matchBooksByLiveLibUrl,
   mergeExistingLiveLibBooks,
   parseLivelibWishlistUrl
@@ -56,7 +54,7 @@ function hasLitresUrls(book) {
 function hasRutrackerUrls(book) {
   return (
     Array.isArray(book?.audiobooks_urls) &&
-    book.audiobooks_urls.some((url) => typeof url === "string" && url.includes("rutracker.org/"))
+    book.audiobooks_urls.some((url) => isRutrackerUrl(url))
   );
 }
 
@@ -209,6 +207,8 @@ export async function main(
   let ranAudiobookDurationEnrichment = false;
   let skippedAudiobookDuration = 0;
   let enrichedAudiobookDuration = 0;
+  let skippedAudiobookNarrator = 0;
+  let enrichedAudiobookNarrator = 0;
   let ranBookPageDetailsEnrichment = false;
   let skippedBookPageDetails = 0;
   let enrichedBookDescriptions = 0;
@@ -384,6 +384,8 @@ export async function main(
       books = detailsResult.books;
       skippedAudiobookDuration = detailsResult.stats.skippedAudiobookDuration;
       enrichedAudiobookDuration = detailsResult.stats.enrichedAudiobookDuration;
+      skippedAudiobookNarrator = detailsResult.stats.skippedAudiobookNarrator;
+      enrichedAudiobookNarrator = detailsResult.stats.enrichedAudiobookNarrator;
       skippedBookPageDetails = detailsResult.stats.skippedBookPageDetails;
       enrichedBookDescriptions = detailsResult.stats.enrichedBookDescriptions;
       enrichedBookImages = detailsResult.stats.enrichedBookImages;
@@ -482,18 +484,14 @@ export async function main(
     console.log(
       `Enriched ${enrichedAudiobookDuration} book(s) with audiobook duration`
     );
+    console.log(
+      `Skipped ${skippedAudiobookNarrator} book(s) without missing audiobook narrator`
+    );
+    console.log(
+      `Enriched ${enrichedAudiobookNarrator} audiobook link(s) with narrator`
+    );
   }
   if (ranBookPageDetailsEnrichment) {
-    const booksWithDescription = books.filter(
-      hasRecordedBookPageDescription
-    ).length;
-    const booksWithImage = books.filter(hasRecordedBookPageImage).length;
-    const booksWithGenre = books.filter(hasRecordedBookPageGenre).length;
-    console.log(
-      `Found LiveLib descriptions for ${booksWithDescription} book(s)`
-    );
-    console.log(`Found LiveLib images for ${booksWithImage} book(s)`);
-    console.log(`Found LiveLib genres for ${booksWithGenre} book(s)`);
     console.log(
       `Skipped ${skippedBookPageDetails} book(s) with existing LiveLib book page details`
     );

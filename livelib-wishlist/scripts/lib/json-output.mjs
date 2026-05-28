@@ -1,6 +1,8 @@
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
+import { normalizeBookAudiobookUrls } from './book-url-fields.mjs';
+
 export async function loadHtmlFile(path) {
   const html = await readFile(path, 'utf8');
   return { url: path, html };
@@ -34,7 +36,7 @@ export async function loadBooksJsonIfExists(path) {
       throw new Error('Existing JSON must contain an array');
     }
 
-    return books;
+    return books.map((book) => normalizeBookAudiobookUrls(book));
   } catch (error) {
     if (error.code === 'ENOENT') {
       return [];
