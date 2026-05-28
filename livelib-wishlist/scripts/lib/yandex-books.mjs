@@ -221,16 +221,23 @@ function extractYandexBooksResultTitle($, link, card, baseUrl) {
 function extractYandexBooksAuthors($, container) {
   const explicitAuthors = container.find('[data-test-id="SNIPPET_AUTHORS"]')
     .toArray()
+    .filter((author) => !isHiddenYandexBooksAuthor($, author))
     .map((author) => cleanYandexBooksAuthorName($(author).text()))
     .filter(Boolean);
   const authors = explicitAuthors.length > 0
     ? explicitAuthors
     : container.find('a[href*="/authors/"]')
       .toArray()
+      .filter((author) => !isHiddenYandexBooksAuthor($, author))
       .map((author) => cleanYandexBooksAuthorName($(author).text()))
       .filter(Boolean);
 
   return authors.filter((author, index) => authors.indexOf(author) === index);
+}
+
+function isHiddenYandexBooksAuthor($, author) {
+  const classNames = ($(author).attr('class') ?? '').split(/\s+/u);
+  return classNames.some((className) => className.startsWith('SnippetAuthorsOneLine_hide__'));
 }
 
 function cleanYandexBooksAuthorName(author) {

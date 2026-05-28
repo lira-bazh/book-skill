@@ -316,6 +316,28 @@ async function waitForLitresSearchResults(page) {
   }).catch(() => {});
 }
 
+async function isLitresAuthenticated(page) {
+  if (typeof page.evaluate !== 'function') {
+    return false;
+  }
+
+  return Boolean(await page.evaluate(() => {
+    const loginTabText = document.querySelector('#tab-login')?.textContent ?? '';
+    return !loginTabText.includes('Войти');
+  }).catch(() => false));
+}
+
+async function isRutrackerAuthenticated(page) {
+  if (typeof page.evaluate !== 'function') {
+    return false;
+  }
+
+  return Boolean(await page.evaluate(() => {
+    const topMenuText = document.querySelector('.topmenu')?.textContent ?? '';
+    return !topMenuText.includes('Вход');
+  }).catch(() => false));
+}
+
 export async function withLitresSearchBrowserSession({
   profileDir = DEFAULT_PROFILE_DIR,
   playwright,
@@ -326,8 +348,8 @@ export async function withLitresSearchBrowserSession({
   }
 
   return withBrowserSession({ profileDir, playwright }, async (session) => {
-    await session.openLitresHome();
-    if (typeof onBeforeSearch === 'function') {
+    const homePage = await session.openLitresHome();
+    if (!homePage.isAuthenticated && typeof onBeforeSearch === 'function') {
       await onBeforeSearch({
         pageUrl: session.page.url(),
       });
@@ -416,15 +438,19 @@ export async function withBrowserSession({
       fetchBookPage: (options) => fetchBookPageWithPage(page, options),
       openLitresHome: async () => {
         await gotoWithRetry(page, 'https://www.litres.ru/');
+        const isAuthenticated = await isLitresAuthenticated(page);
         return {
           url: page.url(),
+          isAuthenticated,
           html: await page.content(),
         };
       },
       openRutrackerHome: async () => {
         await gotoWithRetry(page, 'https://rutracker.org/forum/index.php');
+        const isAuthenticated = await isRutrackerAuthenticated(page);
         return {
           url: page.url(),
+          isAuthenticated,
           html: await page.content(),
         };
       },

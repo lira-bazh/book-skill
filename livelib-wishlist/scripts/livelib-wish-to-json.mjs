@@ -288,10 +288,12 @@ export async function main(
       if (litresSearchPageFetcher) {
         await enrichWithLitres(litresSearchPageFetcher);
       } else if (browserSession) {
-        await browserSession.openLitresHome();
-        await confirmLitresLogin({
-          pageUrl: browserSession.page.url()
-        });
+        const litresHomePage = await browserSession.openLitresHome();
+        if (!litresHomePage?.isAuthenticated) {
+          await confirmLitresLogin({
+            pageUrl: browserSession.page.url()
+          });
+        }
         await enrichWithLitres(browserSession.fetchLitresSearchPage);
       } else {
         await withLitresSearchSession(
@@ -337,10 +339,12 @@ export async function main(
         await enrichWithRutracker(rutrackerSearchPageFetcher);
       } else if (browserSession) {
         if (typeof browserSession.openRutrackerHome === "function") {
-          await browserSession.openRutrackerHome();
-          await confirmRutrackerLogin({
-            pageUrl: browserSession.page?.url?.()
-          });
+          const rutrackerHomePage = await browserSession.openRutrackerHome();
+          if (!rutrackerHomePage?.isAuthenticated) {
+            await confirmRutrackerLogin({
+              pageUrl: browserSession.page?.url?.()
+            });
+          }
         }
         await enrichWithRutracker(browserSession.fetchRutrackerSearchPage);
       }

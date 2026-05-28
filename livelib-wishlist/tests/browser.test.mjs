@@ -554,6 +554,61 @@ test('Litres browser session reuses one persistent context for multiple searches
   assert.equal(closed, true);
 });
 
+test('Litres browser session skips login confirmation when already authenticated', async () => {
+  const visited = [];
+  const confirmations = [];
+  let currentUrl = 'about:blank';
+
+  const fakePage = {
+    async goto(url) {
+      currentUrl = url;
+      visited.push(url);
+    },
+    async waitForLoadState() {},
+    async waitForFunction() {},
+    async evaluate() {
+      return true;
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return `<html><body>${currentUrl}</body></html>`;
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {},
+        };
+      },
+    },
+  };
+
+  await withLitresSearchBrowserSession(
+    {
+      playwright: fakePlaywright,
+      async onBeforeSearch({ pageUrl }) {
+        confirmations.push(pageUrl);
+      },
+    },
+    async ({ fetchSearchPage }) => {
+      await fetchSearchPage({ query: 'Book One Author One' });
+    },
+  );
+
+  assert.deepEqual(visited, [
+    'https://www.litres.ru/',
+    'https://www.litres.ru/search/?q=Book+One+Author+One',
+  ]);
+  assert.deepEqual(confirmations, []);
+});
+
 test('default persistent profile lives in the skill directory', () => {
   const skillDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 

@@ -160,6 +160,43 @@ test('extracts Yandex Books authors without et al marker', () => {
   );
 });
 
+test('ignores hidden Yandex Books authors', () => {
+  const html = `
+    <div data-test-id="SNIPPET">
+      <a href="/books/HiddenAuthor">Книга</a>
+      <a
+        class="SnippetAuthorsOneLine_author__abc SnippetAuthorsOneLine_hide__def"
+        data-test-id="SNIPPET_AUTHORS"
+        href="/authors/hidden"
+      >
+        Скрытый Автор
+      </a>
+      <a data-test-id="SNIPPET_AUTHORS" href="/authors/visible">Видимый Автор</a>
+    </div>
+    <article>
+      <a href="/audiobooks/HiddenAuthorAudio">Книга</a>
+      <a class="SnippetAuthorsOneLine_hide__xyz" href="/authors/hidden">Скрытый Автор</a>
+      <a href="/authors/visible">Видимый Автор</a>
+    </article>
+  `;
+
+  assert.deepEqual(
+    extractYandexBooksSearchResults(html, 'https://books.yandex.ru/search/all/test'),
+    [
+      {
+        title: 'Книга',
+        authors: ['Видимый Автор'],
+        url: 'https://books.yandex.ru/books/HiddenAuthor',
+      },
+      {
+        title: 'Книга',
+        authors: ['Видимый Автор'],
+        url: 'https://books.yandex.ru/audiobooks/HiddenAuthorAudio',
+      },
+    ],
+  );
+});
+
 test('extracts Yandex Books search results from generic result cards', () => {
   const html = `
     <main>

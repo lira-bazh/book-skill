@@ -1,9 +1,9 @@
-import { load } from 'cheerio';
+import { load } from "cheerio";
 
-import { buildBookSearchQuery } from './book-search-query.mjs';
-import { cleanText, normalizeForMatch } from './text-match.mjs';
+import { buildBookSearchQuery } from "./book-search-query.mjs";
+import { cleanText, normalizeForMatch } from "./text-match.mjs";
 
-const RUTRACKER_HOSTNAME = 'rutracker.org';
+const RUTRACKER_HOSTNAME = "rutracker.org";
 const RUTRACKER_BASE_URL = `https://${RUTRACKER_HOSTNAME}/forum/`;
 
 export function buildRutrackerSearchQuery(book) {
@@ -13,11 +13,11 @@ export function buildRutrackerSearchQuery(book) {
 export function buildRutrackerSearchUrl(query) {
   const normalizedQuery = cleanText(query);
   if (!normalizedQuery) {
-    throw new Error('RuTracker search query must not be empty');
+    throw new Error("RuTracker search query must not be empty");
   }
 
-  const url = new URL('tracker.php', RUTRACKER_BASE_URL);
-  url.searchParams.set('nm', normalizedQuery);
+  const url = new URL("tracker.php", RUTRACKER_BASE_URL);
+  url.searchParams.set("nm", normalizedQuery);
   return url.toString();
 }
 
@@ -29,7 +29,7 @@ export function normalizeRutrackerUrl(rawUrl, baseUrl = RUTRACKER_BASE_URL) {
     return null;
   }
 
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
+  if (!["http:", "https:"].includes(parsed.protocol)) {
     return null;
   }
 
@@ -37,11 +37,14 @@ export function normalizeRutrackerUrl(rawUrl, baseUrl = RUTRACKER_BASE_URL) {
     return null;
   }
 
-  if (parsed.pathname !== '/forum/viewtopic.php' || !parsed.searchParams.has('t')) {
+  if (
+    parsed.pathname !== "/forum/viewtopic.php" ||
+    !parsed.searchParams.has("t")
+  ) {
     return null;
   }
 
-  const topicId = cleanText(parsed.searchParams.get('t'));
+  const topicId = cleanText(parsed.searchParams.get("t"));
   if (!/^\d+$/u.test(topicId)) {
     return null;
   }
@@ -49,22 +52,28 @@ export function normalizeRutrackerUrl(rawUrl, baseUrl = RUTRACKER_BASE_URL) {
   return `https://${RUTRACKER_HOSTNAME}/forum/viewtopic.php?t=${topicId}`;
 }
 
-export function extractRutrackerSearchResults(html, baseUrl = RUTRACKER_BASE_URL) {
+export function extractRutrackerSearchResults(
+  html,
+  baseUrl = RUTRACKER_BASE_URL
+) {
   const $ = load(html);
   const results = [];
   const seen = new Set();
 
-  $('.t-title-col').each((_, element) => {
+  $(".t-title-col").each((_, element) => {
     const cell = $(element);
-    const topicLink = cell.find('a[href*="viewtopic.php"]').toArray().find((linkElement) => (
-      normalizeRutrackerUrl($(linkElement).attr('href'), baseUrl)
-    ));
+    const topicLink = cell
+      .find('a[href*="viewtopic.php"]')
+      .toArray()
+      .find((linkElement) =>
+        normalizeRutrackerUrl($(linkElement).attr("href"), baseUrl)
+      );
 
     if (!topicLink) {
       return;
     }
 
-    const url = normalizeRutrackerUrl($(topicLink).attr('href'), baseUrl);
+    const url = normalizeRutrackerUrl($(topicLink).attr("href"), baseUrl);
     if (!url || seen.has(url)) {
       return;
     }
@@ -81,7 +90,11 @@ export function extractRutrackerSearchResults(html, baseUrl = RUTRACKER_BASE_URL
   return results;
 }
 
-export function filterRutrackerResultsForQuery(results, query, { maxResults = Infinity } = {}) {
+export function filterRutrackerResultsForQuery(
+  results,
+  query,
+  { maxResults = Infinity } = {}
+) {
   const queryTokens = normalizedWords(query);
   const filtered = [];
   const seen = new Set();
@@ -100,10 +113,12 @@ export function filterRutrackerResultsForQuery(results, query, { maxResults = In
     }
 
     const titleTokens = new Set(normalizedWords(result.title));
-    const hasAllQueryTokens = queryTokens.every((token) => titleTokens.has(token));
-    const hasMp3 = titleTokens.has('mp3');
+    const hasAllQueryTokens = queryTokens.every((token) =>
+      titleTokens.has(token)
+    );
+    const hasKbps = titleTokens.has("kbps");
 
-    if (hasAllQueryTokens && hasMp3) {
+    if (hasAllQueryTokens && hasKbps) {
       seen.add(result.url);
       filtered.push(result);
     }
@@ -113,25 +128,28 @@ export function filterRutrackerResultsForQuery(results, query, { maxResults = In
 }
 
 function normalizedWords(value) {
-  return normalizeForMatch(value).split(' ').filter(Boolean);
+  return normalizeForMatch(value).split(" ").filter(Boolean);
 }
 
 export function extractMatchingRutrackerUrls(
   html,
   query,
   baseUrl = RUTRACKER_BASE_URL,
-  options = {},
+  options = {}
 ) {
   return filterRutrackerResultsForQuery(
     extractRutrackerSearchResults(html, baseUrl),
     query,
-    options,
+    options
   ).map((result) => result.url);
 }
 
 function existingRutrackerUrlsForBook(book, existingBooksByUrl) {
   const existingBook = existingBooksByUrl.get(book?.url);
-  if (!Array.isArray(existingBook?.rutracker_urls) || existingBook.rutracker_urls.length === 0) {
+  if (
+    !Array.isArray(existingBook?.rutracker_urls) ||
+    existingBook.rutracker_urls.length === 0
+  ) {
     return null;
   }
 
@@ -140,14 +158,12 @@ function existingRutrackerUrlsForBook(book, existingBooksByUrl) {
 
 export function countBooksWithExistingRutrackerUrls(books, existingBooks = []) {
   const existingBooksByUrl = new Map(
-    existingBooks
-      .filter((book) => book?.url)
-      .map((book) => [book.url, book]),
+    existingBooks.filter((book) => book?.url).map((book) => [book.url, book])
   );
 
-  return books.filter((book) => (
+  return books.filter((book) =>
     existingRutrackerUrlsForBook(book, existingBooksByUrl)
-  )).length;
+  ).length;
 }
 
 export async function enrichBooksWithRutrackerUrls(
@@ -159,26 +175,27 @@ export async function enrichBooksWithRutrackerUrls(
     maxResults = Infinity,
     delayMs = 0,
     onSearchError,
-    sleep = defaultSleep,
-  } = {},
+    sleep = defaultSleep
+  } = {}
 ) {
-  if (typeof fetchSearchPage !== 'function') {
-    throw new Error('RuTracker search page fetcher is required');
+  if (typeof fetchSearchPage !== "function") {
+    throw new Error("RuTracker search page fetcher is required");
   }
 
   const existingBooksByUrl = new Map(
-    existingBooks
-      .filter((book) => book?.url)
-      .map((book) => [book.url, book]),
+    existingBooks.filter((book) => book?.url).map((book) => [book.url, book])
   );
   const enrichedBooks = [];
 
   for (const book of books) {
-    const existingRutrackerUrls = existingRutrackerUrlsForBook(book, existingBooksByUrl);
+    const existingRutrackerUrls = existingRutrackerUrlsForBook(
+      book,
+      existingBooksByUrl
+    );
     if (existingRutrackerUrls) {
       enrichedBooks.push({
         ...book,
-        rutracker_urls: [...existingRutrackerUrls],
+        rutracker_urls: [...existingRutrackerUrls]
       });
       continue;
     }
@@ -196,21 +213,21 @@ export async function enrichBooksWithRutrackerUrls(
         book,
         query,
         searchUrl,
-        profileDir,
+        profileDir
       });
       const rutrackerUrls = extractMatchingRutrackerUrls(
-        searchPage?.html ?? '',
+        searchPage?.html ?? "",
         query,
         searchPage?.url ?? searchUrl,
-        { maxResults },
+        { maxResults }
       );
 
       enrichedBooks.push({
         ...book,
-        rutracker_urls: rutrackerUrls,
+        rutracker_urls: rutrackerUrls
       });
     } catch (error) {
-      if (typeof onSearchError === 'function') {
+      if (typeof onSearchError === "function") {
         onSearchError({ book, error });
       }
       enrichedBooks.push({ ...book, rutracker_urls: [] });

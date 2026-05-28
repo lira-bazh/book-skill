@@ -46,6 +46,41 @@ test('enriches only audiobook duration when LiveLib details are already recorded
   });
 });
 
+test('enriches empty description and image without overwriting null genre', async () => {
+  const books = [
+    {
+      title: 'Recorded empty details',
+      url: 'https://www.livelib.ru/book/150000',
+      description: '',
+      image: null,
+      genre: null,
+    },
+  ];
+
+  const result = await enrichBooksWithMissingDetails(books, {
+    fetchBookPage: async ({ url }) => ({
+      url,
+      html: `
+        <meta property="og:description" content="Fetched description">
+        <meta property="og:image" content="/fetched.jpg">
+        <div class="bc-info__item">Жанр: фантастика</div>
+      `,
+    }),
+  });
+
+  assert.equal(result.books[0].description, 'Fetched description');
+  assert.equal(result.books[0].image, 'https://www.livelib.ru/fetched.jpg');
+  assert.equal(result.books[0].genre, null);
+  assert.deepEqual(result.stats, {
+    skippedAudiobookDuration: 0,
+    enrichedAudiobookDuration: 0,
+    skippedBookPageDetails: 0,
+    enrichedBookDescriptions: 1,
+    enrichedBookImages: 1,
+    enrichedBookGenres: 0,
+  });
+});
+
 test('enriches only missing LiveLib description and image', async () => {
   const audiobookCalls = [];
   const bookPageCalls = [];
