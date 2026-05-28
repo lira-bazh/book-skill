@@ -734,6 +734,123 @@ test('browser mode opens every real wishlist pagination page once', async () => 
   assert.deepEqual(result.map((page) => page.url), visited);
 });
 
+test('browser mode scrolls wishlist page before extracting pagination links', async () => {
+  const visited = [];
+  let currentUrl = 'about:blank';
+  let firstPageScrolled = false;
+  const pagesByUrl = new Map([
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish',
+      () => firstPageScrolled
+        ? '<a href="/reader/LiraLantan/wish?page=2">2</a>'
+        : '<html><body>wishlist loading</body></html>',
+    ],
+    [
+      'https://www.livelib.ru/reader/LiraLantan/wish?page=2',
+      () => '<html><body>second page</body></html>',
+    ],
+  ]);
+
+  const fakePage = {
+    async goto(url) {
+      currentUrl = url;
+      visited.push(url);
+    },
+    url() {
+      return currentUrl;
+    },
+    async evaluate() {
+      if (currentUrl === 'https://www.livelib.ru/reader/LiraLantan/wish') {
+        firstPageScrolled = true;
+      }
+    },
+    async content() {
+      return pagesByUrl.get(currentUrl)?.() ?? '';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {},
+        };
+      },
+    },
+  };
+
+  const result = await fetchWishlistPagesWithBrowser({
+    wishlistUrl: {
+      username: 'LiraLantan',
+      url: 'https://www.livelib.ru/reader/LiraLantan/wish',
+    },
+    maxPages: 50,
+    playwright: fakePlaywright,
+  });
+
+  assert.deepEqual(visited, [
+    'https://www.livelib.ru/reader/LiraLantan/wish',
+    'https://www.livelib.ru/reader/LiraLantan/wish?page=2',
+  ]);
+  assert.deepEqual(result.map((page) => page.url), visited);
+});
+
+test('browser mode retries wishlist page after LiveLib rate limit captcha', async () => {
+  const visited = [];
+  let currentUrl = 'about:blank';
+  const wishlistUrl = 'https://www.livelib.ru/reader/LiraLantan/wish';
+
+  const fakePage = {
+    async goto(url) {
+      visited.push(url);
+      currentUrl = visited.length === 1
+        ? 'https://www.livelib.ru/service/ratelimitcaptcha'
+        : url;
+    },
+    url() {
+      return currentUrl;
+    },
+    async content() {
+      return currentUrl === wishlistUrl
+        ? '<html><body>wishlist after captcha</body></html>'
+        : '<html><body>rate limit</body></html>';
+    },
+  };
+
+  const fakePlaywright = {
+    chromium: {
+      async launchPersistentContext() {
+        return {
+          pages() {
+            return [fakePage];
+          },
+          async close() {},
+        };
+      },
+    },
+  };
+
+  const result = await fetchWishlistPagesWithBrowser({
+    wishlistUrl: {
+      username: 'LiraLantan',
+      url: wishlistUrl,
+    },
+    maxPages: 1,
+    playwright: fakePlaywright,
+  });
+
+  assert.deepEqual(visited, [wishlistUrl, wishlistUrl]);
+  assert.deepEqual(result, [
+    {
+      url: wishlistUrl,
+      html: '<html><body>wishlist after captcha</body></html>',
+    },
+  ]);
+});
+
 test('browser mode rejects unexpected LiveLib pages before returning partial data', async () => {
   let closed = false;
   const fakePage = {

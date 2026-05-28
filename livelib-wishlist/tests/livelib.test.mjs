@@ -96,6 +96,7 @@ test('extracts real wishlist pagination links without duplicates', () => {
     <a href="/reader/LiraLantan/wish?page=2">2</a>
     <a href="https://www.livelib.ru/reader/LiraLantan/wish?page=3">3</a>
     <a href="/reader/LiraLantan/wish/listview/smalllist/~4">4</a>
+    <a href="/reader/LiraLantan/wish/listview/biglist/~5">5</a>
     <a href="/reader/LiraLantan/wish">wishlist footer</a>
     <a href="/reader/LiraLantan/wish?page=1">1</a>
     <a href="/reader/LiraLantan/wish?page=4&utm_source=footer">footer tracking</a>
@@ -116,6 +117,7 @@ test('extracts real wishlist pagination links without duplicates', () => {
     'https://www.livelib.ru/reader/LiraLantan/wish?page=2',
     'https://www.livelib.ru/reader/LiraLantan/wish?page=3',
     'https://www.livelib.ru/reader/LiraLantan/wish/listview/smalllist/~4',
+    'https://www.livelib.ru/reader/LiraLantan/wish/listview/biglist/~5',
   ]);
 });
 

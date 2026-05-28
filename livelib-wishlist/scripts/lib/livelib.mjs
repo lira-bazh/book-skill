@@ -28,6 +28,10 @@ const GENRE_SELECTOR = '.bc-info__item';
 
 export class LiveLibAccessError extends Error {}
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export function parseLivelibWishlistUrl(rawUrl) {
   const parsed = new URL(rawUrl);
 
@@ -68,17 +72,19 @@ export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
 
   const expectedPath = `/reader/${username}/wish`;
   const normalizedPath = parsed.pathname.replace(/\/$/, '');
-  const listViewPrefix = `${expectedPath}/listview/smalllist/~`;
+  const listViewMatch = normalizedPath.match(
+    new RegExp(`^${escapeRegExp(expectedPath)}/listview/[^/]+/~([0-9]+)$`),
+  );
 
-  if (normalizedPath.startsWith(listViewPrefix)) {
-    const pageValue = normalizedPath.slice(listViewPrefix.length);
+  if (listViewMatch) {
+    const pageValue = listViewMatch[1];
     const pageNumber = Number.parseInt(pageValue, 10);
 
     if (String(pageNumber) !== pageValue || pageNumber < 2 || parsed.search) {
       return null;
     }
 
-    return `https://www.livelib.ru${listViewPrefix}${pageNumber}`;
+    return `https://www.livelib.ru${normalizedPath}`;
   }
 
   if (normalizedPath !== expectedPath) {
@@ -106,10 +112,12 @@ export function getWishlistPaginationPageNumber(rawUrl, username) {
   const parsed = new URL(rawUrl);
   const expectedPath = `/reader/${username}/wish`;
   const normalizedPath = parsed.pathname.replace(/\/$/, '');
-  const listViewPrefix = `${expectedPath}/listview/smalllist/~`;
+  const listViewMatch = normalizedPath.match(
+    new RegExp(`^${escapeRegExp(expectedPath)}/listview/[^/]+/~([0-9]+)$`),
+  );
 
-  if (normalizedPath.startsWith(listViewPrefix)) {
-    return Number.parseInt(normalizedPath.slice(listViewPrefix.length), 10);
+  if (listViewMatch) {
+    return Number.parseInt(listViewMatch[1], 10);
   }
 
   if (normalizedPath === expectedPath) {

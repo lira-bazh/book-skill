@@ -19,6 +19,8 @@ export const DEFAULT_PAGE_DELAY_MS = 2000;
 export const DEFAULT_NAVIGATION_TIMEOUT_MS = 120000;
 export const DEFAULT_NAVIGATION_ATTEMPTS = 3;
 export const DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS = 5000;
+export const DEFAULT_LIVELIB_ACCESS_CHALLENGE_WAIT_TIMEOUT_MS = 300000;
+export const DEFAULT_LIVELIB_CONTENT_WAIT_TIMEOUT_MS = 10000;
 
 const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const DEFAULT_PROFILE_DIR = resolve(SKILL_DIR, '.browser-profile');
@@ -41,6 +43,16 @@ function isRetriableNavigationError(error) {
     || message.includes('Timeout');
 }
 
+function isLiveLibRateLimitCaptchaUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.hostname.toLowerCase() === 'www.livelib.ru'
+      && parsed.pathname.replace(/\/$/, '') === '/service/ratelimitcaptcha';
+  } catch {
+    return false;
+  }
+}
+
 async function gotoWithRetry(page, url, {
   attempts = DEFAULT_NAVIGATION_ATTEMPTS,
   retryDelayMs = DEFAULT_PAGE_DELAY_MS,
@@ -61,6 +73,107 @@ async function gotoWithRetry(page, url, {
     }
   }
   throw lastError;
+}
+
+async function waitForLiveLibAccessChallenge(page, {
+  wishlistUrl,
+  targetUrl,
+  timeoutMs = DEFAULT_LIVELIB_ACCESS_CHALLENGE_WAIT_TIMEOUT_MS,
+}) {
+  if (typeof page.waitForFunction === 'function') {
+    await page.waitForFunction(
+      ({ baseUrl, username }) => {
+        try {
+          const parsed = new URL(window.location.href, baseUrl);
+          const expectedPath = `/reader/${username}/wish`;
+          const normalizedPath = parsed.pathname.replace(/\/$/, '');
+          const listViewPagePathRe = new RegExp(
+            `^${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/listview/[^/]+/~([0-9]+)$`,
+          );
+
+          if (
+            parsed.hostname.toLowerCase() !== 'www.livelib.ru'
+            || !['http:', 'https:'].includes(parsed.protocol)
+          ) {
+            return false;
+          }
+
+          if (normalizedPath === expectedPath && parsed.search === '') {
+            return true;
+          }
+
+          if (normalizedPath === expectedPath) {
+            const pageValues = parsed.searchParams.getAll('page');
+            const pageNumber = Number.parseInt(pageValues[0], 10);
+            return pageValues.length === 1
+              && [...parsed.searchParams.keys()].every((name) => name === 'page')
+              && String(pageNumber) === pageValues[0]
+              && pageNumber >= 2;
+          }
+
+          const listViewMatch = normalizedPath.match(listViewPagePathRe);
+          if (!listViewMatch || parsed.search) {
+            return false;
+          }
+
+          const pageValue = listViewMatch[1];
+          const pageNumber = Number.parseInt(pageValue, 10);
+          return String(pageNumber) === pageValue && pageNumber >= 2;
+        } catch {
+          return false;
+        }
+      },
+      {
+        baseUrl: wishlistUrl.url,
+        username: wishlistUrl.username,
+      },
+      {
+        timeout: timeoutMs,
+      },
+    ).catch(() => {});
+  }
+
+  if (!isWishlistContentUrl(page.url(), wishlistUrl.username, wishlistUrl.url)) {
+    await gotoWithRetry(page, targetUrl);
+  }
+}
+
+async function waitForPageNetworkIdle(page, timeout = DEFAULT_LIVELIB_CONTENT_WAIT_TIMEOUT_MS) {
+  if (typeof page.waitForLoadState !== 'function') {
+    return;
+  }
+
+  await page.waitForLoadState('networkidle', { timeout }).catch(() => {});
+}
+
+async function scrollPageToBottom(page) {
+  if (typeof page.evaluate !== 'function') {
+    return;
+  }
+
+  await page.evaluate(async () => {
+    const delay = (ms) => new Promise((resolveDelay) => {
+      setTimeout(resolveDelay, ms);
+    });
+    let previousHeight = 0;
+
+    for (let step = 0; step < 12; step += 1) {
+      const currentHeight = document.documentElement.scrollHeight;
+      window.scrollTo(0, currentHeight);
+      await delay(250);
+
+      if (currentHeight === previousHeight) {
+        break;
+      }
+      previousHeight = currentHeight;
+    }
+  }).catch(() => {});
+}
+
+async function waitForLiveLibWishlistContent(page) {
+  await waitForPageNetworkIdle(page);
+  await scrollPageToBottom(page);
+  await waitForPageNetworkIdle(page, 3000);
 }
 
 export async function fetchYandexBooksSearchPageWithBrowser({
@@ -244,12 +357,21 @@ async function fetchWishlistPagesWithPage(page, {
     const url = pending.shift();
     await gotoWithRetry(page, url);
 
-    const html = await page.content();
-    const finalUrl = page.url();
+    let finalUrl = page.url();
+    if (isLiveLibRateLimitCaptchaUrl(finalUrl)) {
+      await waitForLiveLibAccessChallenge(page, {
+        wishlistUrl,
+        targetUrl: url,
+      });
+      finalUrl = page.url();
+    }
+
     if (!isWishlistContentUrl(finalUrl, wishlistUrl.username, wishlistUrl.url)) {
       throw new LiveLibAccessError(`LiveLib opened an unexpected page instead of the wish-list: ${finalUrl}`);
     }
 
+    await waitForLiveLibWishlistContent(page);
+    const html = await page.content();
     fetchedPages.push({ url: finalUrl, html });
 
     for (const pageUrl of extractWishlistPageUrls(html, wishlistUrl.username, finalUrl)) {
