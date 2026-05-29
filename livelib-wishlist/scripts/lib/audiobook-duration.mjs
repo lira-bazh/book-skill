@@ -1,16 +1,23 @@
 import {
+  audiobookEntriesForBook,
   audiobookEntriesMissingNarratorForBook,
   audiobookUrlsForBook,
   isAudiobookUrl,
   isRutrackerUrl,
   mergeAudiobookUrls,
 } from './book-url-fields.mjs';
-import { extractLitresAudiobookNarrator } from './litres-books.mjs';
+import {
+  extractLitresAudiobookDurationMinutes,
+  extractLitresAudiobookNarrator,
+} from './litres-books.mjs';
 import {
   extractRutrackerAudiobookDurationText,
   extractRutrackerAudiobookNarrator,
 } from './rutracker-books.mjs';
-import { extractYandexBooksAudiobookNarrator } from './yandex-books.mjs';
+import {
+  extractYandexBooksAudiobookDurationMinutes,
+  extractYandexBooksAudiobookNarrator,
+} from './yandex-books.mjs';
 
 export { isAudiobookUrl };
 
@@ -71,6 +78,43 @@ export function hasRecordedAudiobookDuration(book) {
   return Number.isFinite(book?.audiobook_duration_minutes);
 }
 
+export function hasRecordedAudiobookEntryDuration(entry) {
+  return Number.isFinite(entry?.duration);
+}
+
+export function audiobookEntriesMissingDurationForBook(book) {
+  return audiobookEntriesForBook(book)
+    .filter((entry) => (
+      (isAudiobookUrl(entry.url) || isRutrackerUrl(entry.url))
+      && !hasRecordedAudiobookEntryDuration(entry)
+    ));
+}
+
+export function averageAudiobookEntryDurationMinutesForBook(book) {
+  const durations = audiobookEntriesForBook(book)
+    .map((entry) => entry.duration)
+    .filter(Number.isFinite);
+
+  if (durations.length === 0) {
+    return null;
+  }
+
+  const totalDuration = durations.reduce((sum, duration) => sum + duration, 0);
+  return Math.round(totalDuration / durations.length);
+}
+
+export function withAverageAudiobookDuration(book) {
+  const averageDuration = averageAudiobookEntryDurationMinutesForBook(book);
+  if (averageDuration === null) {
+    return book;
+  }
+
+  return {
+    ...book,
+    audiobook_duration_minutes: averageDuration,
+  };
+}
+
 export function extractAudiobookDurationMinutes(html) {
   if (typeof html !== 'string' || !html.trim()) {
     return null;
@@ -83,6 +127,16 @@ export function extractAudiobookDurationMinutes(html) {
     return rutrackerDuration;
   }
 
+  const litresDuration = extractLitresAudiobookDurationMinutes(html);
+  if (litresDuration !== null) {
+    return litresDuration;
+  }
+
+  const yandexBooksDuration = extractYandexBooksAudiobookDurationMinutes(html);
+  if (yandexBooksDuration !== null) {
+    return yandexBooksDuration;
+  }
+
   const durationMatch = html.match(DURATION_TEXT_RE);
   return durationMatch ? parseAudiobookDurationMinutes(durationMatch[0]) : null;
 }
@@ -93,9 +147,9 @@ export function extractAudiobookNarrator(html) {
   }
 
   for (const extractNarrator of [
+    extractRutrackerAudiobookNarrator,
     extractYandexBooksAudiobookNarrator,
     extractLitresAudiobookNarrator,
-    extractRutrackerAudiobookNarrator,
   ]) {
     const narrator = extractNarrator(html);
     if (narrator) {
@@ -108,6 +162,10 @@ export function extractAudiobookNarrator(html) {
 
 export function hasAudiobookEntriesMissingNarrator(book) {
   return firstAudiobookEntryMissingNarratorForBook(book) !== null;
+}
+
+export function hasAudiobookEntriesMissingDuration(book) {
+  return audiobookEntriesMissingDurationForBook(book).length > 0;
 }
 
 export async function enrichBooksWithAudiobookDuration(
@@ -132,51 +190,55 @@ export async function enrichBooksWithAudiobookDuration(
   const enrichedBooks = [];
 
   for (const book of books) {
-    const missingNarratorEntry = firstAudiobookEntryMissingNarratorForBook(book);
-    if (hasRecordedAudiobookDuration(book) && !missingNarratorEntry) {
+    const audiobookEntries = audiobookEntriesForBook(book)
+      .filter((entry) => isAudiobookUrl(entry.url) || isRutrackerUrl(entry.url));
+    const entriesToFetch = audiobookEntries
+      .filter((entry) => !hasRecordedAudiobookEntryDuration(entry) || !entry.narrator);
+
+    if (entriesToFetch.length === 0) {
       enrichedBooks.push({ ...book });
       continue;
-    }
-
-    const audiobookUrl = hasRecordedAudiobookDuration(book)
-      ? missingNarratorEntry?.url
-      : firstAudiobookUrlForBook(book);
-    if (!audiobookUrl) {
-      enrichedBooks.push({ ...book });
-      continue;
-    }
-
-    let durationMinutes = null;
-    let narrator = null;
-    try {
-      const page = await fetchAudiobookPage({ url: audiobookUrl, book });
-      const html = page?.html ?? '';
-      durationMinutes = extractAudiobookDurationMinutes(html);
-      if (missingNarratorEntry?.url === audiobookUrl) {
-        narrator = extractAudiobookNarrator(html);
-      }
-    } catch (error) {
-      if (typeof onFetchError === 'function') {
-        onFetchError({ book, url: audiobookUrl, error });
-      }
     }
 
     const nextBook = { ...book };
-    if (durationMinutes !== null && !hasRecordedAudiobookDuration(nextBook)) {
-      nextBook.audiobook_duration_minutes = durationMinutes;
-    }
-    if (narrator && missingNarratorEntry) {
-      nextBook.audiobooks_urls = mergeAudiobookUrls(nextBook, [{
-        url: missingNarratorEntry.url,
-        narrator,
-      }]);
+
+    for (const entry of entriesToFetch) {
+      const audiobookUrl = entry.url;
+      let duration = null;
+      let narrator = null;
+
+      try {
+        const page = await fetchAudiobookPage({ url: audiobookUrl, book: nextBook });
+        const html = page?.html ?? '';
+        if (!hasRecordedAudiobookEntryDuration(entry)) {
+          duration = extractAudiobookDurationMinutes(html);
+        }
+        if (!entry.narrator) {
+          narrator = extractAudiobookNarrator(html);
+        }
+      } catch (error) {
+        if (typeof onFetchError === 'function') {
+          onFetchError({ book: nextBook, url: audiobookUrl, error });
+        }
+      }
+
+      const enrichedEntry = { url: audiobookUrl };
+      if (duration !== null) {
+        enrichedEntry.duration = duration;
+      }
+      if (narrator) {
+        enrichedEntry.narrator = narrator;
+      }
+      if (duration !== null || narrator) {
+        nextBook.audiobooks_urls = mergeAudiobookUrls(nextBook, [enrichedEntry]);
+      }
+
+      if (pageDelayMs > 0) {
+        await sleep(pageDelayMs);
+      }
     }
 
-    enrichedBooks.push(nextBook);
-
-    if (pageDelayMs > 0) {
-      await sleep(pageDelayMs);
-    }
+    enrichedBooks.push(withAverageAudiobookDuration(nextBook));
   }
 
   return enrichedBooks;

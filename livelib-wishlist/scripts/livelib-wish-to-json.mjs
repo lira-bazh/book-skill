@@ -2,11 +2,11 @@
 
 import { createInterface } from "node:readline/promises";
 
-import {
-  hasRecordedAudiobookDuration
-} from "./lib/audiobook-duration.mjs";
 import { enrichBooksWithMissingDetails } from "./lib/book-details-enrichment.mjs";
-import { isRutrackerUrl } from "./lib/book-url-fields.mjs";
+import {
+  audiobookEntriesForBook,
+  isRutrackerUrl
+} from "./lib/book-url-fields.mjs";
 import {
   DEFAULT_MAX_PAGES,
   fetchYandexBooksSearchPageWithBrowser,
@@ -56,6 +56,18 @@ function hasRutrackerUrls(book) {
     Array.isArray(book?.audiobooks_urls) &&
     book.audiobooks_urls.some((url) => isRutrackerUrl(url))
   );
+}
+
+function countAudiobookLinksWithDuration(books) {
+  return books.reduce((count, book) => (
+    count + audiobookEntriesForBook(book)
+      .filter((entry) => Number.isFinite(entry.duration))
+      .length
+  ), 0);
+}
+
+function hasAverageAudiobookDuration(book) {
+  return Number.isFinite(book?.audiobook_duration_minutes);
 }
 
 function parseArgs(argv) {
@@ -375,6 +387,9 @@ export async function main(
             `warning: skipped LiveLib book page details for "${book.title}": ${error.message}`
           );
         },
+        onBookProcessed({ book }) {
+          console.log(`Processed book: ${book.title}`);
+        },
         pageDelayMs: FIXED_REQUEST_DELAY_MS,
         sleep: {
           audiobook: audiobookSleep,
@@ -471,21 +486,25 @@ export async function main(
 	    const booksWithAudiobookUrls = books.filter(
 	      (book) => Array.isArray(book?.audiobooks_urls) && book.audiobooks_urls.length > 0
 	    ).length;
-    const booksWithAudiobookDuration = books.filter(
-      hasRecordedAudiobookDuration
+    const audiobookLinksWithDuration = countAudiobookLinksWithDuration(books);
+    const booksWithAverageAudiobookDuration = books.filter(
+      hasAverageAudiobookDuration
     ).length;
     console.log(`Found audiobook links for ${booksWithAudiobookUrls} book(s)`);
     console.log(
-      `Found audiobook duration for ${booksWithAudiobookDuration} book(s)`
+      `Found average audiobook duration for ${booksWithAverageAudiobookDuration} book(s)`
     );
     console.log(
-      `Skipped ${skippedAudiobookDuration} book(s) with existing audiobook duration`
+      `Found audiobook duration for ${audiobookLinksWithDuration} audiobook link(s)`
     );
     console.log(
-      `Enriched ${enrichedAudiobookDuration} book(s) with audiobook duration`
+      `Skipped ${skippedAudiobookDuration} audiobook link(s) with existing duration`
     );
     console.log(
-      `Skipped ${skippedAudiobookNarrator} book(s) without missing audiobook narrator`
+      `Enriched ${enrichedAudiobookDuration} audiobook link(s) with duration`
+    );
+    console.log(
+      `Skipped ${skippedAudiobookNarrator} audiobook link(s) with existing narrator`
     );
     console.log(
       `Enriched ${enrichedAudiobookNarrator} audiobook link(s) with narrator`

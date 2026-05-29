@@ -14,9 +14,28 @@ import { LIVELIB_SOURCE_BOOK } from './livelib.mjs';
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
 const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
 const YANDEX_BOOKS_NARRATOR_LABEL = 'Рассказчик';
+const YANDEX_BOOKS_DURATION_SECONDS_RE = /(?:"|\\")duration(?:"|\\")\s*:\s*(\d+)/u;
 
 export function extractYandexBooksAudiobookNarrator(html) {
   return extractLabeledPageTextValue(html, [YANDEX_BOOKS_NARRATOR_LABEL]);
+}
+
+export function extractYandexBooksAudiobookDurationMinutes(html) {
+  if (typeof html !== 'string' || !html.trim()) {
+    return null;
+  }
+
+  const durationMatch = html.match(YANDEX_BOOKS_DURATION_SECONDS_RE);
+  if (!durationMatch) {
+    return null;
+  }
+
+  const seconds = Number.parseInt(durationMatch[1], 10);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+
+  return Math.floor(seconds / 60);
 }
 
 export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {

@@ -22,10 +22,63 @@ const AUTHOR_SEPARATOR_RE = /\s*(?:[,;]|\s+[&+]\s+)\s*/u;
 const LITRES_NARRATOR_LABEL = 'Чтец';
 const LITRES_READER_DETAILS_TEST_ID = 'art__reader--details';
 const LITRES_PERSON_NAME_LINK_TEST_ID = 'art__personName--link';
+const JSON_LD_SCRIPT_RE = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/giu;
 
 export function extractLitresAudiobookNarrator(html) {
-  return extractLitresAudiobookNarratorFromReaderDetails(html)
+  return extractLitresAudiobookNarratorFromJsonLd(html)
+    ?? extractLitresAudiobookNarratorFromReaderDetails(html)
     ?? extractLabeledPageTextValue(html, [LITRES_NARRATOR_LABEL]);
+}
+
+export function extractLitresAudiobookDurationMinutes(html) {
+  const duration = extractLitresAudiobookJsonLd(html)?.duration;
+  if (typeof duration !== 'string') {
+    return null;
+  }
+
+  const durationMatch = duration.match(/^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)$/u);
+  if (!durationMatch) {
+    return null;
+  }
+
+  const hours = Number.parseInt(durationMatch[1] ?? '0', 10);
+  const minutes = Number.parseInt(durationMatch[2] ?? '0', 10);
+  const seconds = Number.parseInt(durationMatch[3] ?? '0', 10);
+  const totalMinutes = hours * 60 + minutes + Math.floor(seconds / 60);
+
+  return totalMinutes > 0 ? totalMinutes : null;
+}
+
+function extractLitresAudiobookNarratorFromJsonLd(html) {
+  const readBy = extractLitresAudiobookJsonLd(html)?.readBy;
+  const readers = Array.isArray(readBy) ? readBy : [readBy];
+  const names = readers
+    .map((reader) => cleanText(reader?.name))
+    .filter(Boolean)
+    .filter((name, index, values) => values.indexOf(name) === index);
+
+  return names.length > 0 ? names.join(', ') : null;
+}
+
+function extractLitresAudiobookJsonLd(html) {
+  if (typeof html !== 'string' || !html.trim()) {
+    return null;
+  }
+
+  for (const match of html.matchAll(JSON_LD_SCRIPT_RE)) {
+    let data;
+    try {
+      data = JSON.parse(match[1]);
+    } catch {
+      continue;
+    }
+
+    if (data?.['@type'] === 'Audiobook') {
+      return data;
+    }
+  }
+
+  return null;
 }
 
 function extractLitresAudiobookNarratorFromReaderDetails(html) {

@@ -15,9 +15,11 @@ export function normalizeAudiobookEntry(entry) {
   }
 
   const narrator = cleanText(entry?.narrator);
+  const duration = Number.isFinite(entry?.duration) ? entry.duration : null;
   return {
     url,
     narrator: narrator || null,
+    duration,
   };
 }
 
@@ -69,9 +71,13 @@ export function uniqueAudiobookEntries(entries) {
       continue;
     }
 
-    if (!existingEntry.narrator && normalizedEntry.narrator) {
-      byUrl.set(normalizedEntry.url, normalizedEntry);
-    }
+    byUrl.set(normalizedEntry.url, {
+      url: existingEntry.url,
+      narrator: existingEntry.narrator || normalizedEntry.narrator || null,
+      duration: Number.isFinite(existingEntry.duration)
+        ? existingEntry.duration
+        : normalizedEntry.duration,
+    });
   }
 
   return [...byUrl.values()];

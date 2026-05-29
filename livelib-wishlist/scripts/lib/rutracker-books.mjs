@@ -20,9 +20,13 @@ export function extractRutrackerAudiobookDurationText(html) {
 export function extractRutrackerAudiobookNarrator(html) {
   return extractRutrackerAudiobookNarratorFromPostBody(html)
     ?? extractRutrackerAudiobookNarratorFromTopicTitle(html)
-    ?? extractLabeledPageTextValue(html, [RUTRACKER_NARRATOR_LABEL], {
-    stopLabels: [RUTRACKER_NARRATOR_LABEL, RUTRACKER_DURATION_LABEL]
-  });
+    ?? (
+      isRutrackerTopicHtml(html)
+        ? extractLabeledPageTextValue(html, [RUTRACKER_NARRATOR_LABEL], {
+          stopLabels: [RUTRACKER_NARRATOR_LABEL, RUTRACKER_DURATION_LABEL]
+        })
+        : null
+    );
 }
 
 function extractRutrackerDurationTimeAfterLabel(html) {
@@ -37,6 +41,15 @@ function extractRutrackerDurationTimeAfterLabel(html) {
   }
 
   return text.slice(labelIndex).match(RUTRACKER_DURATION_TIME_RE)?.[0] ?? null;
+}
+
+function isRutrackerTopicHtml(html) {
+  if (typeof html !== "string" || !html.trim()) {
+    return false;
+  }
+
+  const $ = load(html);
+  return $("#topic-title").length > 0 || $(".post_body").length > 0;
 }
 
 function extractRutrackerAudiobookNarratorFromPostBody(html) {
