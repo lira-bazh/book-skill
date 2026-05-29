@@ -25,6 +25,7 @@ import {
   hasRecordedBookPageImage,
   needsBookPageDetails,
 } from './livelib.mjs';
+import { extractRutrackerAudiobookTitle } from './rutracker-books.mjs';
 
 const RUTRACKER_TOPIC_PATH = '/forum/viewtopic.php';
 const RUTRACKER_CURL_TIMEOUT_MS = 30_000;
@@ -37,6 +38,8 @@ function createInitialBookDetailsStats() {
   return {
     skippedAudiobookDuration: 0,
     enrichedAudiobookDuration: 0,
+    skippedAudiobookTitle: 0,
+    enrichedAudiobookTitle: 0,
     skippedAudiobookNarrator: 0,
     enrichedAudiobookNarrator: 0,
     skippedBookPageDetails: 0,
@@ -255,11 +258,17 @@ export async function enrichBookWithMissingDetails(
       || typeof fetchAudiobookPage === 'function'
     ));
   const entriesToFetch = audiobookEntries
-    .filter((entry) => !hasRecordedAudiobookEntryDuration(entry) || !entry.narrator);
+    .filter((entry) => (
+      !hasRecordedAudiobookEntryDuration(entry)
+      || !entry.narrator
+      || (isRutrackerTopicUrl(entry.url) && !entry.title)
+    ));
   const bookDetailsState = getMissingBookDetailsState(nextBook);
 
   stats.skippedAudiobookDuration += audiobookEntries
     .filter(hasRecordedAudiobookEntryDuration).length;
+  stats.skippedAudiobookTitle += audiobookEntries
+    .filter((entry) => entry.title).length;
   stats.skippedAudiobookNarrator += audiobookEntries
     .filter((entry) => entry.narrator).length;
 
@@ -274,6 +283,14 @@ export async function enrichBookWithMissingDetails(
       const html = page?.html ?? '';
 
       const enrichedEntry = { url: fetchUrl };
+      if (isRutrackerTopicUrl(fetchUrl) && !audiobookEntry.title) {
+        const title = extractRutrackerAudiobookTitle(html);
+        if (title) {
+          enrichedEntry.title = title;
+          stats.enrichedAudiobookTitle += 1;
+        }
+      }
+
       if (!hasRecordedAudiobookEntryDuration(audiobookEntry)) {
         const duration = extractAudiobookDurationMinutes(html);
         if (duration !== null) {
@@ -291,7 +308,8 @@ export async function enrichBookWithMissingDetails(
       }
 
       if (
-        Object.prototype.hasOwnProperty.call(enrichedEntry, 'duration')
+        Object.prototype.hasOwnProperty.call(enrichedEntry, 'title')
+        || Object.prototype.hasOwnProperty.call(enrichedEntry, 'duration')
         || Object.prototype.hasOwnProperty.call(enrichedEntry, 'narrator')
       ) {
         nextBook.audiobooks_urls = mergeAudiobookUrls(nextBook, [enrichedEntry]);

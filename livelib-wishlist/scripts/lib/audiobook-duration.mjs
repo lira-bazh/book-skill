@@ -13,6 +13,7 @@ import {
 import {
   extractRutrackerAudiobookDurationText,
   extractRutrackerAudiobookNarrator,
+  extractRutrackerAudiobookTitle,
 } from './rutracker-books.mjs';
 import {
   extractYandexBooksAudiobookDurationMinutes,
@@ -193,7 +194,11 @@ export async function enrichBooksWithAudiobookDuration(
     const audiobookEntries = audiobookEntriesForBook(book)
       .filter((entry) => isAudiobookUrl(entry.url) || isRutrackerUrl(entry.url));
     const entriesToFetch = audiobookEntries
-      .filter((entry) => !hasRecordedAudiobookEntryDuration(entry) || !entry.narrator);
+      .filter((entry) => (
+        !hasRecordedAudiobookEntryDuration(entry)
+        || !entry.narrator
+        || (isRutrackerUrl(entry.url) && !entry.title)
+      ));
 
     if (entriesToFetch.length === 0) {
       enrichedBooks.push({ ...book });
@@ -204,12 +209,16 @@ export async function enrichBooksWithAudiobookDuration(
 
     for (const entry of entriesToFetch) {
       const audiobookUrl = entry.url;
+      let title = null;
       let duration = null;
       let narrator = null;
 
       try {
         const page = await fetchAudiobookPage({ url: audiobookUrl, book: nextBook });
         const html = page?.html ?? '';
+        if (isRutrackerUrl(entry.url) && !entry.title) {
+          title = extractRutrackerAudiobookTitle(html);
+        }
         if (!hasRecordedAudiobookEntryDuration(entry)) {
           duration = extractAudiobookDurationMinutes(html);
         }
@@ -223,13 +232,16 @@ export async function enrichBooksWithAudiobookDuration(
       }
 
       const enrichedEntry = { url: audiobookUrl };
+      if (title) {
+        enrichedEntry.title = title;
+      }
       if (duration !== null) {
         enrichedEntry.duration = duration;
       }
       if (narrator) {
         enrichedEntry.narrator = narrator;
       }
-      if (duration !== null || narrator) {
+      if (title || duration !== null || narrator) {
         nextBook.audiobooks_urls = mergeAudiobookUrls(nextBook, [enrichedEntry]);
       }
 

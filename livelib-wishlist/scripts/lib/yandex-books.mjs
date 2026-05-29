@@ -14,6 +14,7 @@ import { LIVELIB_SOURCE_BOOK } from './livelib.mjs';
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
 const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
 const YANDEX_BOOKS_NARRATOR_LABEL = 'Рассказчик';
+const YANDEX_BOOKS_DURATION_LABEL = 'Длительность';
 const YANDEX_BOOKS_DURATION_SECONDS_RE = /(?:"|\\")duration(?:"|\\")\s*:\s*(\d+)/u;
 
 export function extractYandexBooksAudiobookNarrator(html) {
@@ -26,16 +27,31 @@ export function extractYandexBooksAudiobookDurationMinutes(html) {
   }
 
   const durationMatch = html.match(YANDEX_BOOKS_DURATION_SECONDS_RE);
-  if (!durationMatch) {
+  if (durationMatch) {
+    const seconds = Number.parseInt(durationMatch[1], 10);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.floor(seconds / 60);
+    }
+  }
+
+  return parseYandexBooksDurationMinutes(
+    extractLabeledPageTextValue(html, [YANDEX_BOOKS_DURATION_LABEL]),
+  );
+}
+
+function parseYandexBooksDurationMinutes(value) {
+  const text = cleanText(value).toLowerCase();
+  if (!text) {
     return null;
   }
 
-  const seconds = Number.parseInt(durationMatch[1], 10);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return null;
-  }
+  const hoursMatch = text.match(/(\d+)\s*(?:ч\.?|час(?:а|ов)?)/u);
+  const minutesMatch = text.match(/(\d+)\s*(?:м\.?|мин\.?|минут(?:а|ы)?)/u);
+  const hours = hoursMatch ? Number.parseInt(hoursMatch[1], 10) : 0;
+  const minutes = minutesMatch ? Number.parseInt(minutesMatch[1], 10) : 0;
+  const totalMinutes = hours * 60 + minutes;
 
-  return Math.floor(seconds / 60);
+  return totalMinutes > 0 ? totalMinutes : null;
 }
 
 export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {
@@ -369,6 +385,26 @@ function existingYandexBooksUrlsForBook(book, existingBooksByUrl) {
   return regularUrls;
 }
 
+function isYandexBooksHostUrl(rawUrl) {
+  const url = typeof rawUrl === 'string' ? rawUrl : rawUrl?.url;
+  if (typeof url !== 'string') {
+    return false;
+  }
+
+  try {
+    return new URL(url).hostname.toLowerCase() === 'books.yandex.ru';
+  } catch {
+    return url.toLowerCase().includes('books.yandex.ru/');
+  }
+}
+
+function hasYandexBooksAudiobookUrl(book) {
+  return [
+    ...splitAudiobookUrls(book?.yandex_books_urls).audiobookUrls,
+    ...(Array.isArray(book?.audiobooks_urls) ? book.audiobooks_urls : []),
+  ].some(isYandexBooksHostUrl);
+}
+
 export function countBooksWithExistingYandexBooksUrls(books, existingBooks = []) {
   const existingBooksByUrl = new Map(
     existingBooks
@@ -378,6 +414,7 @@ export function countBooksWithExistingYandexBooksUrls(books, existingBooks = [])
 
   return books.filter((book) => (
     existingYandexBooksUrlsForBook(book, existingBooksByUrl)
+    || hasYandexBooksAudiobookUrl(book)
   )).length;
 }
 
@@ -410,11 +447,11 @@ export async function enrichBooksWithYandexBooksUrls(
     const searchBook = book[LIVELIB_SOURCE_BOOK] ?? book;
     const existingYandexBooksUrls = existingYandexBooksUrlsForBook(book, existingBooksByUrl);
     const existingYandexAudiobookUrls = splitAudiobookUrls(book.yandex_books_urls).audiobookUrls;
-    if (existingYandexBooksUrls) {
+    if (existingYandexBooksUrls || hasYandexBooksAudiobookUrl(book)) {
       const mergedAudiobookUrls = mergeAudiobookUrls(book, existingYandexAudiobookUrls);
       const enrichedBook = {
         ...book,
-        yandex_books_urls: [...existingYandexBooksUrls],
+        yandex_books_urls: existingYandexBooksUrls ? [...existingYandexBooksUrls] : [],
       };
 
       if (

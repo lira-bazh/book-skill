@@ -1,9 +1,9 @@
-import { cleanText } from './text-match.mjs';
+import { cleanText, stripParentheticalText } from './text-match.mjs';
 
 const TITLE_QUERY_STOP_RE = /[.:?]/u;
 
 export function buildBookSearchQuery(book) {
-  const title = cleanText(String(book?.title ?? '').split(TITLE_QUERY_STOP_RE, 1)[0]);
+  const title = cleanText(stripParentheticalText(book?.title).split(TITLE_QUERY_STOP_RE, 1)[0]);
   if (!title || !needsAuthorLastName(title)) {
     return title;
   }

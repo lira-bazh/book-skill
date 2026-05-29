@@ -2,6 +2,18 @@ export function cleanText(value) {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
+export function stripParentheticalText(value) {
+  let text = String(value ?? '');
+  let previousText;
+
+  do {
+    previousText = text;
+    text = text.replace(/\s*\([^()]*\)\s*/gu, ' ');
+  } while (text !== previousText);
+
+  return cleanText(text);
+}
+
 export function extractHrefValues(html) {
   const hrefs = [];
   const linkRe = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
@@ -15,7 +27,7 @@ export function extractHrefValues(html) {
 }
 
 export function normalizeForMatch(value) {
-  return cleanText(value)
+  return stripParentheticalText(value)
     .toLocaleLowerCase('ru-RU')
     .replaceAll('ё', 'е')
     .replace(/[^\p{L}\p{N}]+/gu, ' ')

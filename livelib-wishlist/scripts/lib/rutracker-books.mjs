@@ -7,14 +7,36 @@ import { cleanText, normalizeForMatch } from "./text-match.mjs";
 
 const RUTRACKER_HOSTNAME = "rutracker.org";
 const RUTRACKER_BASE_URL = `https://${RUTRACKER_HOSTNAME}/forum/`;
-const RUTRACKER_DURATION_LABEL = "Время звучания";
-const RUTRACKER_NARRATOR_LABEL = "Исполнитель";
+const RUTRACKER_TITLE_LABELS = ["Название", "Наименование"];
+const RUTRACKER_DURATION_LABELS = ["Время звучания", "Продолжительность"];
+const RUTRACKER_NARRATOR_LABELS = [
+  "Исполнитель (рассказчик)",
+  "Исполнитель",
+  "Рассказчик",
+  "Чтец",
+  "Читает"
+];
 const RUTRACKER_DURATION_TIME_RE = /\b\d{2}:\d{2}:\d{2}\b/u;
 
-export function extractRutrackerAudiobookDurationText(html) {
-  return extractRutrackerDurationTimeAfterLabel(html) ?? extractLabeledPageTextValue(html, [RUTRACKER_DURATION_LABEL], {
-    stopLabels: [RUTRACKER_DURATION_LABEL, RUTRACKER_NARRATOR_LABEL]
+export function extractRutrackerAudiobookTitle(html) {
+  const title = extractLabeledPageTextValue(html, RUTRACKER_TITLE_LABELS, {
+    stopLabels: [
+      ...RUTRACKER_TITLE_LABELS,
+      ...RUTRACKER_NARRATOR_LABELS,
+      ...RUTRACKER_DURATION_LABELS,
+    ],
   });
+
+  return normalizeRutrackerAudiobookTitle(title)
+    ?? extractRutrackerAudiobookTitleFromPostHeading(html)
+    ?? extractRutrackerAudiobookTitleFromTopicTitle(html);
+}
+
+export function extractRutrackerAudiobookDurationText(html) {
+  return extractRutrackerDurationTimeAfterLabel(html)
+    ?? extractLabeledPageTextValue(html, RUTRACKER_DURATION_LABELS, {
+      stopLabels: [...RUTRACKER_DURATION_LABELS, ...RUTRACKER_NARRATOR_LABELS]
+    });
 }
 
 export function extractRutrackerAudiobookNarrator(html) {
@@ -22,8 +44,8 @@ export function extractRutrackerAudiobookNarrator(html) {
     ?? extractRutrackerAudiobookNarratorFromTopicTitle(html)
     ?? (
       isRutrackerTopicHtml(html)
-        ? extractLabeledPageTextValue(html, [RUTRACKER_NARRATOR_LABEL], {
-          stopLabels: [RUTRACKER_NARRATOR_LABEL, RUTRACKER_DURATION_LABEL]
+        ? extractLabeledPageTextValue(html, RUTRACKER_NARRATOR_LABELS, {
+          stopLabels: [...RUTRACKER_NARRATOR_LABELS, ...RUTRACKER_DURATION_LABELS]
         })
         : null
     );
@@ -35,12 +57,69 @@ function extractRutrackerDurationTimeAfterLabel(html) {
   }
 
   const text = load(html)("body").text();
-  const labelIndex = text.indexOf(RUTRACKER_DURATION_LABEL);
+  const labelIndex = RUTRACKER_DURATION_LABELS
+    .map((label) => text.indexOf(label))
+    .filter((index) => index !== -1)
+    .sort((left, right) => left - right)[0] ?? -1;
   if (labelIndex === -1) {
     return null;
   }
 
   return text.slice(labelIndex).match(RUTRACKER_DURATION_TIME_RE)?.[0] ?? null;
+}
+
+function normalizeRutrackerAudiobookTitle(value) {
+  return cleanText(value) || null;
+}
+
+function extractRutrackerAudiobookTitleFromPostHeading(html) {
+  if (typeof html !== "string" || !html.trim()) {
+    return null;
+  }
+
+  const $ = load(html);
+  const firstPost = $(".post_body").first();
+  if (firstPost.length === 0) {
+    return null;
+  }
+
+  const parts = [];
+  for (const child of firstPost.contents().toArray()) {
+    const node = $(child);
+    if (child.type === "tag" && (child.name === "br" || node.hasClass("post-br"))) {
+      break;
+    }
+
+    const text = cleanText(node.text());
+    if (text) {
+      parts.push(text);
+    }
+  }
+
+  return normalizeRutrackerAudiobookTitle(parts.join(" "));
+}
+
+function extractRutrackerAudiobookTitleFromTopicTitle(html) {
+  if (typeof html !== "string" || !html.trim()) {
+    return null;
+  }
+
+  const $ = load(html);
+  const topicTitle = $("#topic-title").first().clone();
+  if (topicTitle.length === 0) {
+    return null;
+  }
+
+  topicTitle.find("span.cyrillic-char").remove();
+  const title = cleanText(topicTitle.text())
+    .replace(/\s*\[[^\]]*\]\s*$/u, "")
+    .replace(/\s*::\s*RuTracker\.org\s*$/iu, "")
+    .split(/\s[-–]\s/u)
+    .at(-1)
+    ?.split(/\s*,\s*/u)
+    .at(-1);
+
+  return normalizeRutrackerAudiobookTitle(title);
 }
 
 function isRutrackerTopicHtml(html) {
@@ -66,7 +145,9 @@ function extractRutrackerAudiobookNarratorFromPostBody(html) {
   const label = firstPost
     .find(".post-b")
     .toArray()
-    .find((element) => cleanText($(element).text()).replace(/:$/u, "") === RUTRACKER_NARRATOR_LABEL);
+    .find((element) =>
+      RUTRACKER_NARRATOR_LABELS.includes(cleanText($(element).text()).replace(/:$/u, ""))
+    );
   if (!label) {
     return null;
   }
@@ -289,6 +370,9 @@ export function extractMatchingRutrackerAudiobookEntries(
 function existingRutrackerUrlsForBook(book, existingBooksByUrl) {
   const existingBook = existingBooksByUrl.get(book?.url);
   const urls = [
+    ...(Array.isArray(book?.audiobooks_urls)
+      ? book.audiobooks_urls.filter((url) => isRutrackerUrl(url))
+      : []),
     ...(Array.isArray(existingBook?.rutracker_urls) ? existingBook.rutracker_urls : []),
     ...(Array.isArray(existingBook?.audiobooks_urls)
       ? existingBook.audiobooks_urls.filter((url) => isRutrackerUrl(url))

@@ -329,6 +329,28 @@ function existingLitresUrlsForBook(book, existingBooksByUrl) {
   return regularUrls;
 }
 
+function isLitresHostUrl(rawUrl) {
+  const url = typeof rawUrl === 'string' ? rawUrl : rawUrl?.url;
+  if (typeof url !== 'string') {
+    return false;
+  }
+
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname === 'www.litres.ru' || hostname === 'litres.ru';
+  } catch {
+    const normalizedUrl = url.toLowerCase();
+    return normalizedUrl.includes('www.litres.ru/') || normalizedUrl.includes('litres.ru/');
+  }
+}
+
+function hasLitresAudiobookUrl(book) {
+  return [
+    ...splitAudiobookUrls(book?.litres_urls).audiobookUrls,
+    ...(Array.isArray(book?.audiobooks_urls) ? book.audiobooks_urls : []),
+  ].some(isLitresHostUrl);
+}
+
 export function countBooksWithExistingLitresUrls(books, existingBooks = []) {
   const existingBooksByUrl = new Map(
     existingBooks
@@ -338,6 +360,7 @@ export function countBooksWithExistingLitresUrls(books, existingBooks = []) {
 
   return books.filter((book) => (
     existingLitresUrlsForBook(book, existingBooksByUrl)
+    || hasLitresAudiobookUrl(book)
   )).length;
 }
 
@@ -370,10 +393,10 @@ export async function enrichBooksWithLitresUrls(
   for (const book of books) {
     const existingLitresUrls = existingLitresUrlsForBook(book, existingBooksByUrl);
     const existingLitresAudiobookUrls = splitAudiobookUrls(book.litres_urls).audiobookUrls;
-    if (existingLitresUrls) {
+    if (existingLitresUrls || hasLitresAudiobookUrl(book)) {
       enrichedBooks.push({
         ...book,
-        litres_urls: existingLitresUrls,
+        litres_urls: existingLitresUrls ?? [],
         audiobooks_urls: mergeAudiobookUrls(book, existingLitresAudiobookUrls),
       });
       continue;

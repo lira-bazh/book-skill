@@ -14,10 +14,12 @@ export function normalizeAudiobookEntry(entry) {
     return null;
   }
 
+  const title = cleanText(entry?.title);
   const narrator = cleanText(entry?.narrator);
   const duration = Number.isFinite(entry?.duration) ? entry.duration : null;
   return {
     url,
+    title: title || null,
     narrator: narrator || null,
     duration,
   };
@@ -73,6 +75,7 @@ export function uniqueAudiobookEntries(entries) {
 
     byUrl.set(normalizedEntry.url, {
       url: existingEntry.url,
+      title: existingEntry.title || normalizedEntry.title || null,
       narrator: existingEntry.narrator || normalizedEntry.narrator || null,
       duration: Number.isFinite(existingEntry.duration)
         ? existingEntry.duration
