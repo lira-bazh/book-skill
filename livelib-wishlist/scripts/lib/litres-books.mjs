@@ -15,6 +15,14 @@ import {
 import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
 
 const LITRES_ITEM_PATH_RE = /^\/(?:book|audiobook)\/[^/]+(?:\/[^/]+)*$/;
+const LITRES_AD_URL_PARAM_NAMES = new Set([
+  'banner_id',
+  'banner_title',
+  'campaign_id',
+  'erid',
+]);
+const LITRES_AD_URL_PARAM_VALUES = new Set(['banners']);
+const LITRES_AD_TEXT_RE = /(?:advert|advertising|banner|promo|реклама|баннер)/iu;
 const NON_TITLE_TEXT_RE = /^(?:купить|читать|слушать|скачать|подробнее|в корзину|фрагмент|слушать фрагмент|читать онлайн|отложить|оценить|\d+(?:[.,]\d+)?\s*(?:₽|руб\.?|р\.?))$/i;
 const TITLE_FORMAT_NOTE_RE = /\s*\((?:сборник)\)\s*/giu;
 const AUTHOR_ET_AL_RE = /(?:^|[\s,;])и\s+др\.?$/iu;
@@ -222,6 +230,37 @@ function getElementSearchText(element) {
   ].filter(Boolean).join(' ').toLocaleLowerCase('ru-RU');
 }
 
+function isLitresAdUrl(rawUrl, baseUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl, baseUrl);
+  } catch {
+    return false;
+  }
+
+  for (const [name, value] of parsed.searchParams) {
+    const normalizedName = name.toLowerCase();
+    const normalizedValue = value.toLowerCase();
+    if (
+      LITRES_AD_URL_PARAM_NAMES.has(normalizedName)
+      || LITRES_AD_URL_PARAM_VALUES.has(normalizedValue)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function isLitresAdScope($, scope) {
+  return scope
+    .parents()
+    .addBack()
+    .toArray()
+    .some((element) => LITRES_AD_TEXT_RE.test(getElementSearchText(element)))
+    || LITRES_AD_TEXT_RE.test(cleanText(scope.text()));
+}
+
 function collectTitleCandidates($, link, scope, url, baseUrl) {
   const candidates = [];
 
@@ -249,23 +288,35 @@ function collectTitleCandidates($, link, scope, url, baseUrl) {
   return uniqueTexts(candidates).filter(isUsefulTitleText);
 }
 
-function mergeAuthors(currentAuthors, nextAuthors) {
-  return uniqueTexts([...currentAuthors, ...nextAuthors]);
-}
-
 export function extractLitresSearchResults(html, baseUrl = 'https://www.litres.ru/') {
   const $ = load(html);
-  const resultsByUrl = new Map();
+  const results = [];
 
-  $('a[href]').each((_, element) => {
-    const link = $(element);
-    const url = normalizeLitresUrl(link.attr('href'), baseUrl);
+  $('[data-testid="art__wrapper"]').each((_, element) => {
+    const scope = $(element);
+    if (isLitresAdScope($, scope)) {
+      return;
+    }
+
+    const link = scope
+      .find('a[href]')
+      .toArray()
+      .map((linkElement) => $(linkElement))
+      .find((candidate) => normalizeLitresUrl(candidate.attr('href'), baseUrl));
+    if (!link) {
+      return;
+    }
+
+    const href = link.attr('href');
+    if (isLitresAdUrl(href, baseUrl)) {
+      return;
+    }
+
+    const url = normalizeLitresUrl(href, baseUrl);
     if (!url) {
       return;
     }
 
-    const container = link.closest('article, li, [data-testid], .art-item, .book-card, .card');
-    const scope = container.length > 0 ? container : link.parent();
     const titleCandidates = collectTitleCandidates($, link, scope, url, baseUrl);
     const authors = scope.find('a[href*="/author/"], [data-testid*="author"], [class*="author"]')
       .toArray()
@@ -273,29 +324,18 @@ export function extractLitresSearchResults(html, baseUrl = 'https://www.litres.r
       .filter(Boolean)
       .filter((author, index, values) => values.indexOf(author) === index);
 
-    const existingResult = resultsByUrl.get(url);
-    if (existingResult) {
-      const nextTitle = titleCandidates[0];
-      resultsByUrl.set(url, {
-        title: isUsefulTitleText(existingResult.title) ? existingResult.title : nextTitle,
-        authors: mergeAuthors(existingResult.authors, authors),
-        url,
-      });
-      return;
-    }
-
     if (titleCandidates.length === 0) {
       return;
     }
 
-    resultsByUrl.set(url, {
+    results.push({
       title: titleCandidates[0],
       authors,
       url,
     });
   });
 
-  return [...resultsByUrl.values()];
+  return results;
 }
 
 export function isLitresResultSimilarToBook(result, book) {

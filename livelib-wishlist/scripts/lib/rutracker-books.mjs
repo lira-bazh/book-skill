@@ -7,6 +7,7 @@ import { cleanText, normalizeForMatch } from "./text-match.mjs";
 
 const RUTRACKER_HOSTNAME = "rutracker.org";
 const RUTRACKER_BASE_URL = `https://${RUTRACKER_HOSTNAME}/forum/`;
+const RUTRACKER_AUTHOR_LABELS = ["Автор", "Авторы"];
 const RUTRACKER_TITLE_LABELS = ["Название", "Наименование"];
 const RUTRACKER_DURATION_LABELS = ["Время звучания", "Продолжительность"];
 const RUTRACKER_NARRATOR_LABELS = [
@@ -17,38 +18,73 @@ const RUTRACKER_NARRATOR_LABELS = [
   "Читает"
 ];
 const RUTRACKER_DURATION_TIME_RE = /\b\d{2}:\d{2}:\d{2}\b/u;
+const RUTRACKER_EXCLUDED_SEARCH_ROW_RE = /аудиокниги\s+на\s+английском\s+языке/iu;
 
 export function extractRutrackerAudiobookTitle(html) {
-  const title = extractLabeledPageTextValue(html, RUTRACKER_TITLE_LABELS, {
-    stopLabels: [
-      ...RUTRACKER_TITLE_LABELS,
-      ...RUTRACKER_NARRATOR_LABELS,
-      ...RUTRACKER_DURATION_LABELS,
-    ],
+  const firstPostHtml = extractRutrackerFirstTopicPostHtml(html);
+  if (!firstPostHtml) {
+    return null;
+  }
+
+  const stopLabels = [
+    ...RUTRACKER_AUTHOR_LABELS,
+    ...RUTRACKER_TITLE_LABELS,
+    ...RUTRACKER_NARRATOR_LABELS,
+    ...RUTRACKER_DURATION_LABELS,
+  ];
+  const author = extractLabeledPageTextValue(
+    firstPostHtml,
+    RUTRACKER_AUTHOR_LABELS,
+    { stopLabels }
+  );
+  const title = extractLabeledPageTextValue(firstPostHtml, RUTRACKER_TITLE_LABELS, {
+    stopLabels,
   });
 
-  return normalizeRutrackerAudiobookTitle(title)
-    ?? extractRutrackerAudiobookTitleFromPostHeading(html)
-    ?? extractRutrackerAudiobookTitleFromTopicTitle(html);
+  return normalizeRutrackerAudiobookTitleWithAuthor(author, title)
+    ?? extractRutrackerAudiobookTitleFromPostHeading(firstPostHtml);
 }
 
 export function extractRutrackerAudiobookDurationText(html) {
-  return extractRutrackerDurationTimeAfterLabel(html)
-    ?? extractLabeledPageTextValue(html, RUTRACKER_DURATION_LABELS, {
+  const firstPostHtml = extractRutrackerFirstTopicPostHtml(html);
+  if (!firstPostHtml) {
+    return null;
+  }
+
+  return extractRutrackerDurationTimeAfterLabel(firstPostHtml)
+    ?? extractLabeledPageTextValue(firstPostHtml, RUTRACKER_DURATION_LABELS, {
       stopLabels: [...RUTRACKER_DURATION_LABELS, ...RUTRACKER_NARRATOR_LABELS]
     });
 }
 
 export function extractRutrackerAudiobookNarrator(html) {
-  return extractRutrackerAudiobookNarratorFromPostBody(html)
-    ?? extractRutrackerAudiobookNarratorFromTopicTitle(html)
+  const firstPostHtml = extractRutrackerFirstTopicPostHtml(html);
+  if (!firstPostHtml) {
+    return null;
+  }
+
+  return extractRutrackerAudiobookNarratorFromPostBody(firstPostHtml)
     ?? (
-      isRutrackerTopicHtml(html)
-        ? extractLabeledPageTextValue(html, RUTRACKER_NARRATOR_LABELS, {
+      isRutrackerTopicHtml(firstPostHtml)
+        ? extractLabeledPageTextValue(firstPostHtml, RUTRACKER_NARRATOR_LABELS, {
           stopLabels: [...RUTRACKER_NARRATOR_LABELS, ...RUTRACKER_DURATION_LABELS]
         })
         : null
     );
+}
+
+function extractRutrackerFirstTopicPostHtml(html) {
+  if (typeof html !== "string" || !html.trim()) {
+    return null;
+  }
+
+  const $ = load(html);
+  const firstPost = $('#topic_main tbody[id^="post_"]').first();
+  if (firstPost.length === 0) {
+    return null;
+  }
+
+  return $.html(firstPost);
 }
 
 function extractRutrackerDurationTimeAfterLabel(html) {
@@ -70,6 +106,26 @@ function extractRutrackerDurationTimeAfterLabel(html) {
 
 function normalizeRutrackerAudiobookTitle(value) {
   return cleanText(value) || null;
+}
+
+function normalizeRutrackerAudiobookTitleWithAuthor(author, title) {
+  const normalizedTitle = normalizeRutrackerAudiobookTitle(title);
+  if (!normalizedTitle) {
+    return null;
+  }
+
+  const normalizedAuthor = cleanText(author);
+  if (!normalizedAuthor) {
+    return normalizedTitle;
+  }
+
+  const titleForMatch = normalizeForMatch(normalizedTitle);
+  const authorForMatch = normalizeForMatch(normalizedAuthor);
+  if (titleForMatch.includes(authorForMatch)) {
+    return normalizedTitle;
+  }
+
+  return `${normalizedAuthor} - ${normalizedTitle}`;
 }
 
 function extractRutrackerAudiobookTitleFromPostHeading(html) {
@@ -99,36 +155,13 @@ function extractRutrackerAudiobookTitleFromPostHeading(html) {
   return normalizeRutrackerAudiobookTitle(parts.join(" "));
 }
 
-function extractRutrackerAudiobookTitleFromTopicTitle(html) {
-  if (typeof html !== "string" || !html.trim()) {
-    return null;
-  }
-
-  const $ = load(html);
-  const topicTitle = $("#topic-title").first().clone();
-  if (topicTitle.length === 0) {
-    return null;
-  }
-
-  topicTitle.find("span.cyrillic-char").remove();
-  const title = cleanText(topicTitle.text())
-    .replace(/\s*\[[^\]]*\]\s*$/u, "")
-    .replace(/\s*::\s*RuTracker\.org\s*$/iu, "")
-    .split(/\s[-–]\s/u)
-    .at(-1)
-    ?.split(/\s*,\s*/u)
-    .at(-1);
-
-  return normalizeRutrackerAudiobookTitle(title);
-}
-
 function isRutrackerTopicHtml(html) {
   if (typeof html !== "string" || !html.trim()) {
     return false;
   }
 
   const $ = load(html);
-  return $("#topic-title").length > 0 || $(".post_body").length > 0;
+  return $(".post_body").length > 0;
 }
 
 function extractRutrackerAudiobookNarratorFromPostBody(html) {
@@ -168,26 +201,6 @@ function extractRutrackerAudiobookNarratorFromPostBody(html) {
   }
 
   return cleanText(parts.join(" ").replace(/^:/u, "")) || null;
-}
-
-function extractRutrackerAudiobookNarratorFromTopicTitle(html) {
-  if (typeof html !== "string" || !html.trim()) {
-    return null;
-  }
-
-  const $ = load(html);
-  const topicTitle = $("#topic-title").first().clone();
-  if (topicTitle.length === 0) {
-    return null;
-  }
-
-  topicTitle.find("span.cyrillic-char").remove();
-  const bracketText = cleanText(topicTitle.text()).match(/\[([^\]]+)\]/u)?.[1];
-  if (!bracketText) {
-    return null;
-  }
-
-  return cleanText(bracketText.split(",")[0]) || null;
 }
 
 export function buildRutrackerSearchQuery(book) {
@@ -263,7 +276,7 @@ export function extractRutrackerSearchResults(
     }
 
     const title = cleanText(cell.text());
-    if (!title) {
+    if (!title || isExcludedRutrackerSearchRow(cell.closest("tr").text())) {
       return;
     }
 
@@ -276,6 +289,10 @@ export function extractRutrackerSearchResults(
   });
 
   return results;
+}
+
+function isExcludedRutrackerSearchRow(rowText) {
+  return RUTRACKER_EXCLUDED_SEARCH_ROW_RE.test(rowText);
 }
 
 function extractRutrackerNarratorFromResultCell($, cell) {
