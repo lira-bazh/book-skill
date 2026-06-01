@@ -6,6 +6,7 @@ import {
   extractHrefValues,
   hasTokenOverlap,
   normalizeForMatch,
+  stripParentheticalText,
 } from './text-match.mjs';
 import { buildBookSearchQuery } from './book-search-query.mjs';
 import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
@@ -16,6 +17,7 @@ const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
 const YANDEX_BOOKS_NARRATOR_LABEL = 'Рассказчик';
 const YANDEX_BOOKS_DURATION_LABEL = 'Длительность';
 const YANDEX_BOOKS_DURATION_SECONDS_RE = /(?:"|\\")duration(?:"|\\")\s*:\s*(\d+)/u;
+const YANDEX_BOOKS_TITLE_MATCH_STOP_RE = /[.:?]/u;
 
 export function extractYandexBooksAudiobookNarrator(html) {
   return extractLabeledPageTextValue(html, [YANDEX_BOOKS_NARRATOR_LABEL]);
@@ -55,7 +57,7 @@ function parseYandexBooksDurationMinutes(value) {
 }
 
 export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {
-  const source = normalizeForMatch(sourceTitle);
+  const source = normalizeYandexBooksSourceTitleForMatch(sourceTitle);
   const candidate = normalizeForMatch(candidateTitle);
 
   if (!source || !candidate) {
@@ -67,6 +69,12 @@ export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {
     candidate.includes(source) ||
     source.includes(candidate) ||
     hasTokenOverlap(source, candidate)
+  );
+}
+
+function normalizeYandexBooksSourceTitleForMatch(title) {
+  return normalizeForMatch(
+    cleanText(stripParentheticalText(title).split(YANDEX_BOOKS_TITLE_MATCH_STOP_RE, 1)[0]),
   );
 }
 

@@ -3,7 +3,7 @@ import { load } from "cheerio";
 import { extractLabeledPageTextValue } from "./audiobook-page-fields.mjs";
 import { buildBookSearchQuery } from "./book-search-query.mjs";
 import { isRutrackerUrl, mergeAudiobookUrls } from "./book-url-fields.mjs";
-import { cleanText, normalizeForMatch } from "./text-match.mjs";
+import { cleanText, normalizeForMatch, stripParentheticalText } from "./text-match.mjs";
 
 const RUTRACKER_HOSTNAME = "rutracker.org";
 const RUTRACKER_BASE_URL = `https://${RUTRACKER_HOSTNAME}/forum/`;
@@ -22,6 +22,10 @@ const RUTRACKER_NARRATOR_LABELS = [
 const RUTRACKER_DURATION_TIME_RE = /\b\d{2}:\d{2}:\d{2}\b/u;
 const RUTRACKER_EXCLUDED_SEARCH_ROW_RE =
   /аудиокниги\s+на\s+(?:английском\s+языке|других\s+иностранных\s+языках)/iu;
+const RUTRACKER_AUDIO_FORMAT_RE = /^(?:mp3|m4b|aac|flac|ogg|wma|wav)\b/iu;
+const AUTHOR_ET_AL_RE = /(?:^|[\s,;])и\s+др\.?$/iu;
+const AUTHOR_SEPARATOR_RE = /\s*(?:[,;]|\s+[&+]\s+)\s*/u;
+const TITLE_MATCH_STOP_RE = /[.:?]/u;
 
 export function extractRutrackerAudiobookTitle(html) {
   const firstPostHtml = extractRutrackerFirstTopicPostHtml(html);
@@ -302,20 +306,27 @@ export function extractRutrackerNarratorFromBracketsText(value) {
     return null;
   }
 
-  const narratorMatch = text.match(/^\[\s*\[?\s*([^\],]+?)(?:\s*\]|\s*,)/u);
-  return narratorMatch ? cleanText(narratorMatch[1]) || null : null;
+  for (const match of text.matchAll(/\[\s*\[?\s*([^\],]+?)(?:\s*\]|\s*,)/gu)) {
+    const narrator = cleanText(match[1]);
+    if (narrator && !RUTRACKER_AUDIO_FORMAT_RE.test(narrator)) {
+      return narrator;
+    }
+  }
+
+  return null;
 }
 
-export function filterRutrackerResultsForQuery(
+export function filterRutrackerResultsForBook(
   results,
-  query,
+  book,
   { maxResults = Infinity } = {}
 ) {
-  const queryTokens = normalizedWords(query);
+  const titleTokens = normalizedBookTitleWords(book);
+  const authorTokens = authorLastNameWords(book?.authors);
   const filtered = [];
   const seen = new Set();
 
-  if (queryTokens.length === 0) {
+  if (titleTokens.length === 0) {
     return filtered;
   }
 
@@ -328,13 +339,15 @@ export function filterRutrackerResultsForQuery(
       continue;
     }
 
-    const titleTokens = new Set(normalizedWords(result.title));
-    const hasAllQueryTokens = queryTokens.every((token) =>
-      titleTokens.has(token)
+    const resultTokens = new Set(normalizedWords(result.title));
+    const hasAllTitleTokens = titleTokens.every((token) =>
+      resultTokens.has(token)
     );
-    const hasKbps = titleTokens.has("kbps");
+    const hasAuthorLastName = authorTokens.length === 0 ||
+      authorTokens.some((token) => resultTokens.has(token));
+    const hasKbps = resultTokens.has("kbps");
 
-    if (hasAllQueryTokens && hasKbps) {
+    if (hasAllTitleTokens && hasAuthorLastName && hasKbps) {
       seen.add(result.url);
       filtered.push(result);
     }
@@ -347,14 +360,34 @@ function normalizedWords(value) {
   return normalizeForMatch(value).split(" ").filter(Boolean);
 }
 
+function normalizedBookTitleWords(book) {
+  const title = cleanText(
+    stripParentheticalText(book?.title).split(TITLE_MATCH_STOP_RE, 1)[0]
+  );
+  return normalizedWords(title);
+}
+
+function authorLastNameWords(authors) {
+  if (!Array.isArray(authors)) {
+    return [];
+  }
+
+  return authors
+    .flatMap((author) =>
+      cleanText(author).replace(AUTHOR_ET_AL_RE, "").split(AUTHOR_SEPARATOR_RE)
+    )
+    .map((author) => normalizedWords(author).at(-1))
+    .filter(Boolean);
+}
+
 export function extractMatchingRutrackerTorApiAudiobookEntries(
   items,
-  query,
+  book,
   options = {}
 ) {
-  return filterRutrackerResultsForQuery(
+  return filterRutrackerResultsForBook(
     extractRutrackerTorApiSearchResults(items),
-    query,
+    book,
     options
   ).map((result) => ({
     url: result.url,
@@ -364,12 +397,12 @@ export function extractMatchingRutrackerTorApiAudiobookEntries(
 
 function extractRutrackerAudiobookEntriesFromTorApiSearchPage(
   searchPage,
-  query,
+  book,
   options
 ) {
   return extractMatchingRutrackerTorApiAudiobookEntries(
     searchPage?.items ?? [],
-    query,
+    book,
     options
   );
 }
@@ -497,7 +530,7 @@ export async function enrichBooksWithRutrackerUrls(
       });
       const rutrackerUrls = extractRutrackerAudiobookEntriesFromTorApiSearchPage(
         searchPage,
-        query,
+        book,
         { maxResults }
       );
 

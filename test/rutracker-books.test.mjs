@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildRutrackerTorApiSearchUrl,
   extractRutrackerAudiobookTitle,
+  extractMatchingRutrackerTorApiAudiobookEntries,
   extractRutrackerTorApiSearchResults,
 } from "../livelib-wishlist/scripts/lib/rutracker-books.mjs";
 
@@ -66,4 +67,35 @@ test("extractRutrackerTorApiSearchResults normalizes TorAPI results", () => {
       narrator: "Александр Клюквин"
     }
   ]);
+});
+
+test("extractMatchingRutrackerTorApiAudiobookEntries requires author last name", () => {
+  const items = [
+    {
+      Name: "Иван Иванов - Тигр! Тигр! [MP3, 128 kbps]",
+      Url: "https://rutracker.org/forum/viewtopic.php?t=2589951",
+      Category: "Аудиокниги"
+    },
+    {
+      Name: "Альфред Бестер - Тигр! Тигр! [MP3, 128 kbps]",
+      Url: "https://rutracker.org/forum/viewtopic.php?t=2589949",
+      Category: "Аудиокниги"
+    }
+  ];
+
+  assert.deepEqual(
+    extractMatchingRutrackerTorApiAudiobookEntries(
+      items,
+      {
+        title: "Тигр! Тигр!",
+        authors: ["Альфред Бестер"]
+      }
+    ),
+    [
+      {
+        url: "https://rutracker.org/forum/viewtopic.php?t=2589949",
+        narrator: null
+      }
+    ]
+  );
 });
