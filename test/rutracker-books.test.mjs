@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildRutrackerTorApiSearchUrl,
   extractRutrackerAudiobookTitle,
-  extractRutrackerSearchResults,
+  extractRutrackerTorApiSearchResults,
 } from "../livelib-wishlist/scripts/lib/rutracker-books.mjs";
 
 test("extractRutrackerAudiobookTitle combines RuTracker author and title labels", () => {
@@ -32,26 +33,37 @@ test("extractRutrackerAudiobookTitle combines RuTracker author and title labels"
   );
 });
 
-test("extractRutrackerSearchResults skips English audiobook forum rows", () => {
-  const html = `
-    <table>
-      <tr>
-        <td>Аудиокниги на английском языке</td>
-        <td class="t-title-col">
-          <a href="viewtopic.php?t=2589948">Alfred Bester - The Stars My Destination [MP3, 128 kbps]</a>
-        </td>
-      </tr>
-      <tr>
-        <td>Аудиокниги</td>
-        <td class="t-title-col">
-          <a href="viewtopic.php?t=2589949">Альфред Бестер - Тигр! Тигр! [MP3, 128 kbps]</a>
-        </td>
-      </tr>
-    </table>
-  `;
-
-  assert.deepEqual(
-    extractRutrackerSearchResults(html).map((result) => result.url),
-    ["https://rutracker.org/forum/viewtopic.php?t=2589949"]
+test("buildRutrackerTorApiSearchUrl builds TorAPI RuTracker title search URL", () => {
+  assert.equal(
+    buildRutrackerTorApiSearchUrl("Альфред Бестер Тигр"),
+    "https://torapi.vercel.app/api/search/title/rutracker?query=%D0%90%D0%BB%D1%8C%D1%84%D1%80%D0%B5%D0%B4+%D0%91%D0%B5%D1%81%D1%82%D0%B5%D1%80+%D0%A2%D0%B8%D0%B3%D1%80&category=0&page=all"
   );
+});
+
+test("extractRutrackerTorApiSearchResults normalizes TorAPI results", () => {
+  const items = [
+    {
+      Name: "Альфред Бестер - Тигр! Тигр! [Александр Клюквин, MP3, 128 kbps]",
+      Url: "https://rutracker.org/forum/viewtopic.php?t=2589949",
+      Category: "Аудиокниги"
+    },
+    {
+      Name: "Alfred Bester - Tiger! Tiger! [MP3, 128 kbps]",
+      Url: "https://rutracker.org/forum/viewtopic.php?t=2589950",
+      Category: "Аудиокниги на английском языке"
+    },
+    {
+      Name: "Duplicate",
+      Url: "https://rutracker.org/forum/viewtopic.php?t=2589949",
+      Category: "Аудиокниги"
+    }
+  ];
+
+  assert.deepEqual(extractRutrackerTorApiSearchResults(items), [
+    {
+      title: "Альфред Бестер - Тигр! Тигр! [Александр Клюквин, MP3, 128 kbps]",
+      url: "https://rutracker.org/forum/viewtopic.php?t=2589949",
+      narrator: "Александр Клюквин"
+    }
+  ]);
 });

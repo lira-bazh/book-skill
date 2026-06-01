@@ -9,7 +9,6 @@ import {
   normalizeBookUrl,
 } from './livelib.mjs';
 import { buildLitresSearchUrl } from './litres-books.mjs';
-import { buildRutrackerSearchUrl } from './rutracker-books.mjs';
 import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
 import { isAudiobookUrl, isRutrackerUrl } from './book-url-fields.mjs';
 import { cleanText } from './text-match.mjs';
@@ -229,17 +228,6 @@ export async function fetchLitresSearchPageWithBrowser({
   ));
 }
 
-export async function fetchRutrackerSearchPageWithBrowser({
-  query,
-  searchUrl,
-  profileDir = DEFAULT_PROFILE_DIR,
-  playwright,
-}) {
-  return withBrowserSession({ profileDir, playwright }, ({ fetchRutrackerSearchPage }) => (
-    fetchRutrackerSearchPage({ query, searchUrl })
-  ));
-}
-
 export async function fetchAudiobookPageWithBrowser({
   url,
   profileDir = DEFAULT_PROFILE_DIR,
@@ -276,18 +264,6 @@ async function fetchLitresSearchPageWithPage(page, { query, searchUrl }) {
 
   await gotoWithRetry(page, targetUrl);
   await waitForLitresSearchResults(page);
-  return {
-    query: normalizedQuery,
-    url: page.url(),
-    html: await page.content(),
-  };
-}
-
-async function fetchRutrackerSearchPageWithPage(page, { query, searchUrl }) {
-  const normalizedQuery = cleanText(query);
-  const targetUrl = searchUrl ?? buildRutrackerSearchUrl(normalizedQuery);
-
-  await gotoRutrackerWithRetry(page, targetUrl);
   return {
     query: normalizedQuery,
     url: page.url(),
@@ -360,17 +336,6 @@ async function isLitresAuthenticated(page) {
   return Boolean(await page.evaluate(() => {
     const loginTabText = document.querySelector('#tab-login')?.textContent ?? '';
     return !loginTabText.includes('Войти');
-  }).catch(() => false));
-}
-
-async function isRutrackerAuthenticated(page) {
-  if (typeof page.evaluate !== 'function') {
-    return false;
-  }
-
-  return Boolean(await page.evaluate(() => {
-    const topMenuText = document.querySelector('.topmenu')?.textContent ?? '';
-    return !topMenuText.includes('Вход');
   }).catch(() => false));
 }
 
@@ -469,21 +434,11 @@ export async function withBrowserSession({
       fetchWishlistPages: (options) => fetchWishlistPagesWithPage(page, options),
       fetchYandexBooksSearchPage: (options) => fetchYandexBooksSearchPageWithPage(page, options),
       fetchLitresSearchPage: (options) => fetchLitresSearchPageWithPage(page, options),
-      fetchRutrackerSearchPage: (options) => fetchRutrackerSearchPageWithPage(page, options),
       fetchAudiobookPage: (options) => fetchAudiobookPageWithPage(page, options),
       fetchBookPage: (options) => fetchBookPageWithPage(page, options),
       openLitresHome: async () => {
         await gotoWithRetry(page, 'https://www.litres.ru/');
         const isAuthenticated = await isLitresAuthenticated(page);
-        return {
-          url: page.url(),
-          isAuthenticated,
-          html: await page.content(),
-        };
-      },
-      openRutrackerHome: async () => {
-        await gotoRutrackerWithRetry(page, 'https://rutracker.org/forum/index.php');
-        const isAuthenticated = await isRutrackerAuthenticated(page);
         return {
           url: page.url(),
           isAuthenticated,

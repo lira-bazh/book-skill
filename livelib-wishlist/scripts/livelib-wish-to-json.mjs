@@ -31,7 +31,8 @@ import {
 } from "./lib/litres-books.mjs";
 import {
   countBooksWithExistingRutrackerUrls,
-  enrichBooksWithRutrackerUrls
+  enrichBooksWithRutrackerUrls,
+  fetchRutrackerSearchPageWithTorApi
 } from "./lib/rutracker-books.mjs";
 import {
   countBooksWithExistingYandexBooksUrls,
@@ -119,8 +120,8 @@ Options:
   --html <path>            Fallback: load a saved HTML file.
   --out <path>             Output JSON path. Default: wishlist.json
   --max-pages <number>     Maximum pagination pages. Default: ${DEFAULT_MAX_PAGES}
-  Request delay is fixed at ${FIXED_REQUEST_DELAY_MS} ms for LiveLib pagination, Yandex Books searches, Litres searches, and RuTracker searches.
-  Browser workflow searches matching books on Yandex Books, Litres, and RuTracker automatically.
+  Request delay is fixed at ${FIXED_REQUEST_DELAY_MS} ms for LiveLib pagination, Yandex Books searches, Litres searches, and RuTracker API searches.
+  Browser workflow searches matching books on Yandex Books and Litres automatically; RuTracker search uses TorAPI.
   --max-results <n>       Maximum matching URLs per book for each search enrichment. Default: ${DEFAULT_MAX_RESULTS}
 `);
 }
@@ -133,20 +134,6 @@ async function waitForLitresLoginConfirmation({
   try {
     await readline.question(
       "Litres is open in the browser. Sign in manually if needed, then press Enter here to continue..."
-    );
-  } finally {
-    readline.close();
-  }
-}
-
-async function waitForRutrackerLoginConfirmation({
-  input = process.stdin,
-  output = process.stdout
-} = {}) {
-  const readline = createInterface({ input, output });
-  try {
-    await readline.question(
-      "RuTracker is open in the browser. Sign in manually if needed, then press Enter here to continue..."
     );
   } finally {
     readline.close();
@@ -167,7 +154,6 @@ export async function main(
     bookPageFetcher,
     bookPageSleep,
     confirmLitresLogin = waitForLitresLoginConfirmation,
-    confirmRutrackerLogin = waitForRutrackerLoginConfirmation,
     browserSessionRunner = withBrowserSession,
     withLitresSearchSession = withLitresSearchBrowserSession,
     booksJsonExistsFn = booksJsonExists,
@@ -240,9 +226,7 @@ export async function main(
       Boolean(browserSession) || typeof yandexSearchPageFetcher === "function";
     const shouldEnrichLitres =
       Boolean(browserSession) || typeof litresSearchPageFetcher === "function";
-    const shouldEnrichRutracker =
-      typeof rutrackerSearchPageFetcher === "function" ||
-      typeof browserSession?.fetchRutrackerSearchPage === "function";
+    const shouldEnrichRutracker = true;
     const fetchAudiobookPage =
       audiobookPageFetcher ?? browserSession?.fetchAudiobookPage;
     const shouldEnrichAudiobookDuration =
@@ -351,16 +335,8 @@ export async function main(
 
       if (rutrackerSearchPageFetcher) {
         await enrichWithRutracker(rutrackerSearchPageFetcher);
-      } else if (browserSession) {
-        if (typeof browserSession.openRutrackerHome === "function") {
-          const rutrackerHomePage = await browserSession.openRutrackerHome();
-          if (!rutrackerHomePage?.isAuthenticated) {
-            await confirmRutrackerLogin({
-              pageUrl: browserSession.page?.url?.()
-            });
-          }
-        }
-        await enrichWithRutracker(browserSession.fetchRutrackerSearchPage);
+      } else {
+        await enrichWithRutracker(fetchRutrackerSearchPageWithTorApi);
       }
 
       enrichedRutracker = books.filter(
@@ -437,8 +413,7 @@ export async function main(
     !args.html || typeof yandexSearchPageFetcher === "function";
   const shouldEnrichLitres =
     !args.html || typeof litresSearchPageFetcher === "function";
-  const shouldEnrichRutracker =
-    !args.html || typeof rutrackerSearchPageFetcher === "function";
+  const shouldEnrichRutracker = true;
 
   console.log(
     `Accepted LiveLib wish-list URL for user ${wishlistUrl.username}: ${wishlistUrl.url}`
