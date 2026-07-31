@@ -9,6 +9,7 @@ import {
 } from "./lib/book-url-fields.mjs";
 import {
   DEFAULT_MAX_PAGES,
+  type BrowserSession,
   fetchYandexBooksSearchPageWithBrowser,
   withBrowserSession,
   withLitresSearchBrowserSession
@@ -21,6 +22,7 @@ import {
 } from "./lib/json-output.mjs";
 import {
   extractBooksFromPages,
+  type LiveLibBook,
   matchBooksByLiveLibUrl,
   mergeExistingLiveLibBooks,
   parseLivelibWishlistUrl
@@ -43,24 +45,122 @@ const DEFAULT_MAX_RESULTS = 5;
 const FIXED_REQUEST_DELAY_MS = 3000;
 const RUTRACKER_REQUEST_DELAY_MS = 10000;
 
-function hasYandexBooksUrls(book) {
+type AppBook = Record<string | symbol, unknown> & {
+  url?: string;
+  title?: unknown;
+  authors?: unknown;
+  yandex_books_urls?: unknown;
+  litres_urls?: unknown;
+  audiobooks_urls?: unknown;
+  audiobook_duration_minutes?: unknown;
+};
+
+type HtmlPage = {
+  url: string;
+  html: string;
+};
+
+type CliArgs = {
+  out: string;
+  html: string | null;
+  maxPages: number;
+  profileDir?: string;
+  maxResults: number;
+  help?: boolean;
+  url?: string;
+};
+
+type SearchPage = {
+  query?: string;
+  url: string;
+  html: string;
+};
+
+type SearchPageFetcher = (options: {
+  query: string;
+  searchUrl?: string;
+  book?: AppBook;
+  profileDir?: unknown;
+  playwright?: unknown;
+}) => Promise<SearchPage> | SearchPage;
+
+type PageFetcher = (options: {
+  url: string;
+  book: Record<string, unknown> & { url?: string | null };
+}) => Promise<HtmlPage> | HtmlPage;
+
+type SleepFn = (ms: number) => Promise<unknown>;
+
+type LoginConfirmationOptions = {
+  pageUrl?: string;
+  input?: NodeJS.ReadableStream;
+  output?: NodeJS.WritableStream;
+};
+
+type MainDependencies = {
+  yandexSearchPageFetcher?: SearchPageFetcher;
+  yandexSleep?: SleepFn;
+  litresSearchPageFetcher?: SearchPageFetcher;
+  litresSleep?: SleepFn;
+  rutrackerSearchPageFetcher?: SearchPageFetcher;
+  rutrackerSleep?: SleepFn;
+  audiobookPageFetcher?: PageFetcher;
+  audiobookSleep?: SleepFn;
+  bookPageFetcher?: PageFetcher;
+  bookPageSleep?: SleepFn;
+  confirmLitresLogin?: (options?: LoginConfirmationOptions) => Promise<void> | void;
+  confirmRutrackerLogin?: (options?: LoginConfirmationOptions) => Promise<void> | void;
+  browserSessionRunner?: (
+    options: { profileDir?: string },
+    callback: (browserSession: BrowserSession) => Promise<void> | void
+  ) => Promise<void>;
+  withLitresSearchSession?: (
+    options: {
+      profileDir?: string;
+      onBeforeSearch?: (options: LoginConfirmationOptions) => Promise<void> | void;
+    },
+    callback: (session: { fetchSearchPage: SearchPageFetcher }) => Promise<void> | void
+  ) => Promise<void>;
+  booksJsonExistsFn?: typeof booksJsonExists;
+  loadBooksJsonIfExistsFn?: (path: string) => Promise<AppBook[]>;
+  writeBooksJsonFn?: (path: string, books: readonly AppBook[]) => Promise<string>;
+};
+
+type YandexEnrichOptions = NonNullable<
+  Parameters<typeof enrichBooksWithYandexBooksUrls>[1]
+>;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function bookTitle(book: unknown): string {
+  if (typeof book !== "object" || book === null || !("title" in book)) {
+    return "";
+  }
+
+  const title = (book as { title?: unknown }).title;
+  return typeof title === "string" ? title : "";
+}
+
+function hasYandexBooksUrls(book: AppBook): boolean {
   return (
     Array.isArray(book?.yandex_books_urls) && book.yandex_books_urls.length > 0
   );
 }
 
-function hasLitresUrls(book) {
+function hasLitresUrls(book: AppBook): boolean {
   return Array.isArray(book?.litres_urls) && book.litres_urls.length > 0;
 }
 
-function hasRutrackerUrls(book) {
+function hasRutrackerUrls(book: AppBook): boolean {
   return (
     Array.isArray(book?.audiobooks_urls) &&
     book.audiobooks_urls.some((url) => isRutrackerUrl(url))
   );
 }
 
-function countAudiobookLinksWithDuration(books) {
+function countAudiobookLinksWithDuration(books: readonly AppBook[]): number {
   return books.reduce(
     (count, book) =>
       count +
@@ -71,34 +171,34 @@ function countAudiobookLinksWithDuration(books) {
   );
 }
 
-function hasAverageAudiobookDuration(book) {
+function hasAverageAudiobookDuration(book: AppBook): boolean {
   return Number.isFinite(book?.audiobook_duration_minutes);
 }
 
-function parseArgs(argv) {
-  const args = {
+function parseArgs(argv: readonly string[]): CliArgs {
+  const args: CliArgs = {
     out: "wishlist.json",
     html: null,
     maxPages: DEFAULT_MAX_PAGES,
     profileDir: undefined,
     maxResults: DEFAULT_MAX_RESULTS
   };
-  const positional = [];
+  const positional: string[] = [];
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--") {
       continue;
     } else if (arg === "--out") {
-      args.out = argv[++i];
+      args.out = argv[++i] ?? args.out;
     } else if (arg === "--html") {
-      args.html = argv[++i];
+      args.html = argv[++i] ?? null;
     } else if (arg === "--max-pages") {
-      args.maxPages = Number.parseInt(argv[++i], 10);
+      args.maxPages = Number.parseInt(argv[++i] ?? "", 10);
     } else if (arg === "--profile-dir") {
       args.profileDir = argv[++i];
     } else if (arg === "--max-results" || arg === "--yandex-max-results") {
-      args.maxResults = Number.parseInt(argv[++i], 10);
+      args.maxResults = Number.parseInt(argv[++i] ?? "", 10);
     } else if (arg === "-h" || arg === "--help") {
       args.help = true;
     } else {
@@ -134,7 +234,7 @@ Options:
 async function waitForLitresLoginConfirmation({
   input = process.stdin,
   output = process.stdout
-} = {}) {
+}: LoginConfirmationOptions = {}) {
   const readline = createInterface({ input, output });
   try {
     await readline.question(
@@ -148,7 +248,7 @@ async function waitForLitresLoginConfirmation({
 async function waitForRutrackerLoginConfirmation({
   input = process.stdin,
   output = process.stdout
-} = {}) {
+}: LoginConfirmationOptions = {}) {
   const readline = createInterface({ input, output });
   try {
     await readline.question(
@@ -160,7 +260,7 @@ async function waitForRutrackerLoginConfirmation({
 }
 
 export async function main(
-  argv = process.argv.slice(2),
+  argv: readonly string[] = process.argv.slice(2),
   {
     yandexSearchPageFetcher,
     yandexSleep,
@@ -179,8 +279,8 @@ export async function main(
     booksJsonExistsFn = booksJsonExists,
     loadBooksJsonIfExistsFn = loadBooksJsonIfExists,
     writeBooksJsonFn = writeBooksJson
-  } = {}
-) {
+  }: MainDependencies = {}
+): Promise<number> {
   const args = parseArgs(argv);
 
   if (args.help || !args.url) {
@@ -196,26 +296,30 @@ export async function main(
   try {
     wishlistUrl = parseLivelibWishlistUrl(args.url);
   } catch (error) {
-    console.error(`error: ${error.message}`);
+    console.error(`error: ${errorMessage(error)}`);
     return 2;
   }
 
-  let outputJsonExists;
-  let existingBooks = [];
+  let outputJsonExists: boolean;
+  let existingBooks: AppBook[] = [];
   try {
     outputJsonExists = await booksJsonExistsFn(args.out);
     if (outputJsonExists) {
       existingBooks = await loadBooksJsonIfExistsFn(args.out);
     }
   } catch (error) {
-    console.error(`error: ${error.message}`);
+    console.error(`error: ${errorMessage(error)}`);
     return 2;
   }
 
-  let fetchedPages;
-  let livelibBooks;
-  let livelibMatch;
-  let books;
+  let fetchedPages: HtmlPage[] = [];
+  let livelibBooks: LiveLibBook[] = [];
+  let livelibMatch: ReturnType<typeof matchBooksByLiveLibUrl> = {
+    matched: [],
+    newBooks: [],
+    removedBooks: []
+  };
+  let books: AppBook[] = [];
   let skippedYandexBooks = 0;
   let enrichedYandexBooks = 0;
   let skippedLitres = 0;
@@ -232,12 +336,15 @@ export async function main(
   let enrichedBookDescriptions = 0;
   let enrichedBookImages = 0;
   let enrichedBookGenres = 0;
-  let outputPath;
+  let outputPath = "";
 
   const finishWorkflow = async ({
     nextFetchedPages,
     browserSession = null
-  }) => {
+  }: {
+    nextFetchedPages: HtmlPage[];
+    browserSession?: BrowserSession | null;
+  }): Promise<void> => {
     fetchedPages = nextFetchedPages;
     livelibBooks = extractBooksFromPages(fetchedPages);
     livelibMatch = matchBooksByLiveLibUrl(livelibBooks, existingBooks);
@@ -246,7 +353,6 @@ export async function main(
       Boolean(browserSession) || typeof yandexSearchPageFetcher === "function";
     const shouldEnrichLitres =
       Boolean(browserSession) || typeof litresSearchPageFetcher === "function";
-    const shouldEnrichRutracker = true;
     const fetchAudiobookPage =
       audiobookPageFetcher ?? browserSession?.fetchAudiobookPage;
     const shouldEnrichAudiobookDuration =
@@ -261,16 +367,17 @@ export async function main(
       skippedYandexBooks = countBooksWithExistingYandexBooksUrls(books, books);
       books = await enrichBooksWithYandexBooksUrls(books, {
         existingBooks: books,
-        fetchSearchPage:
+        fetchSearchPage: (
           yandexSearchPageFetcher ??
           browserSession?.fetchYandexBooksSearchPage ??
-          fetchYandexBooksSearchPageWithBrowser,
+          fetchYandexBooksSearchPageWithBrowser
+        ) as YandexEnrichOptions["fetchSearchPage"],
         profileDir: args.profileDir,
         maxResults: args.maxResults,
         delayMs: FIXED_REQUEST_DELAY_MS,
         onSearchError({ book, error }) {
           console.error(
-            `warning: skipped Yandex Books search for "${book.title}": ${error.message}`
+            `warning: skipped Yandex Books search for "${bookTitle(book)}": ${errorMessage(error)}`
           );
         },
         sleep: yandexSleep
@@ -287,7 +394,7 @@ export async function main(
       );
       skippedLitres = countBooksWithExistingLitresUrls(books, books);
 
-      const enrichWithLitres = async (fetchSearchPage) => {
+      const enrichWithLitres = async (fetchSearchPage: SearchPageFetcher): Promise<void> => {
         books = await enrichBooksWithLitresUrls(books, {
           existingBooks: books,
           fetchSearchPage,
@@ -296,7 +403,7 @@ export async function main(
           delayMs: FIXED_REQUEST_DELAY_MS,
           onSearchError({ book, error }) {
             console.error(
-              `warning: skipped Litres search for "${book.title}": ${error.message}`
+              `warning: skipped Litres search for "${bookTitle(book)}": ${errorMessage(error)}`
             );
           },
           sleep: litresSleep
@@ -309,7 +416,7 @@ export async function main(
         const litresHomePage = await browserSession.openLitresHome();
         if (!litresHomePage?.isAuthenticated) {
           await confirmLitresLogin({
-            pageUrl: browserSession.page.url()
+            pageUrl: browserSession.page?.url()
           });
         }
         await enrichWithLitres(browserSession.fetchLitresSearchPage);
@@ -331,57 +438,55 @@ export async function main(
       ).length;
     }
 
-    if (shouldEnrichRutracker) {
-      const rutrackerUrlsBeforeEnrichment = new Map(
-        books.map((book) => [book.url, hasRutrackerUrls(book)])
-      );
-      skippedRutracker = countBooksWithExistingRutrackerUrls(books, books);
+    const rutrackerUrlsBeforeEnrichment = new Map(
+      books.map((book) => [book.url, hasRutrackerUrls(book)])
+    );
+    skippedRutracker = countBooksWithExistingRutrackerUrls(books, books);
 
-      const enrichWithRutracker = async (fetchSearchPage) => {
-        books = await enrichBooksWithRutrackerUrls(books, {
-          existingBooks: books,
-          fetchSearchPage,
-          profileDir: args.profileDir,
-          maxResults: args.maxResults,
-          delayMs: RUTRACKER_REQUEST_DELAY_MS,
-          onSearchError({ book, error }) {
-            console.error(
-              `warning: skipped RuTracker search for "${book.title}": ${error.message}`
-            );
-          },
-          sleep: rutrackerSleep
-        });
-      };
-
-      if (rutrackerSearchPageFetcher) {
-        await enrichWithRutracker(rutrackerSearchPageFetcher);
-      } else if (browserSession) {
-        let rutrackerHomePage = null;
-        try {
-          rutrackerHomePage = await browserSession.openRutrackerHome();
-        } catch (error) {
+    const enrichWithRutracker = async (fetchSearchPage: SearchPageFetcher): Promise<void> => {
+      books = await enrichBooksWithRutrackerUrls(books, {
+        existingBooks: books,
+        fetchSearchPage,
+        profileDir: args.profileDir,
+        maxResults: args.maxResults,
+        delayMs: RUTRACKER_REQUEST_DELAY_MS,
+        onSearchError({ book, error }) {
           console.error(
-            `warning: skipped RuTracker enrichment: ${error.message}`
+            `warning: skipped RuTracker search for "${bookTitle(book)}": ${errorMessage(error)}`
           );
-        }
+        },
+        sleep: rutrackerSleep
+      });
+    };
 
-        if (rutrackerHomePage) {
-          if (!rutrackerHomePage.isAuthenticated) {
-            await confirmRutrackerLogin({
-              pageUrl: browserSession.page.url()
-            });
-          }
-          await enrichWithRutracker(browserSession.fetchRutrackerSearchPage);
-        }
-      } else {
-        await enrichWithRutracker(fetchRutrackerSearchPage);
+    if (rutrackerSearchPageFetcher) {
+      await enrichWithRutracker(rutrackerSearchPageFetcher);
+    } else if (browserSession) {
+      let rutrackerHomePage = null;
+      try {
+        rutrackerHomePage = await browserSession.openRutrackerHome();
+      } catch (error) {
+        console.error(
+          `warning: skipped RuTracker enrichment: ${errorMessage(error)}`
+        );
       }
 
-      enrichedRutracker = books.filter(
-        (book) =>
-          !rutrackerUrlsBeforeEnrichment.get(book.url) && hasRutrackerUrls(book)
-      ).length;
+      if (rutrackerHomePage) {
+        if (!rutrackerHomePage.isAuthenticated) {
+          await confirmRutrackerLogin({
+            pageUrl: browserSession.page?.url()
+          });
+        }
+        await enrichWithRutracker(browserSession.fetchRutrackerSearchPage);
+      }
+    } else {
+      await enrichWithRutracker(fetchRutrackerSearchPage);
     }
+
+    enrichedRutracker = books.filter(
+      (book) =>
+        !rutrackerUrlsBeforeEnrichment.get(book.url) && hasRutrackerUrls(book)
+    ).length;
 
     if (shouldEnrichAudiobookDuration || shouldEnrichBookPageDetails) {
       ranAudiobookDurationEnrichment = shouldEnrichAudiobookDuration;
@@ -393,16 +498,16 @@ export async function main(
         fetchBookPage: shouldEnrichBookPageDetails ? fetchBookPage : undefined,
         onAudiobookFetchError({ book, error }) {
           console.error(
-            `warning: skipped audiobook duration for "${book.title}": ${error.message}`
+            `warning: skipped audiobook duration for "${bookTitle(book)}": ${errorMessage(error)}`
           );
         },
         onBookPageFetchError({ book, error }) {
           console.error(
-            `warning: skipped LiveLib book page details for "${book.title}": ${error.message}`
+            `warning: skipped LiveLib book page details for "${bookTitle(book)}": ${errorMessage(error)}`
           );
         },
         onBookProcessed({ book }) {
-          console.log(`Processed book: ${book.title}`);
+          console.log(`Processed book: ${bookTitle(book)}`);
         },
         pageDelayMs: FIXED_REQUEST_DELAY_MS,
         sleep: {
@@ -410,7 +515,7 @@ export async function main(
           bookPage: bookPageSleep
         }
       });
-      books = detailsResult.books;
+      books = detailsResult.books as AppBook[];
       skippedAudiobookDuration = detailsResult.stats.skippedAudiobookDuration;
       enrichedAudiobookDuration = detailsResult.stats.enrichedAudiobookDuration;
       skippedAudiobookNarrator = detailsResult.stats.skippedAudiobookNarrator;
@@ -444,14 +549,13 @@ export async function main(
       );
     }
   } catch (error) {
-    console.error(`error: ${error.message}`);
+    console.error(`error: ${errorMessage(error)}`);
     return 2;
   }
   const shouldEnrichYandexBooks =
     !args.html || typeof yandexSearchPageFetcher === "function";
   const shouldEnrichLitres =
     !args.html || typeof litresSearchPageFetcher === "function";
-  const shouldEnrichRutracker = true;
 
   console.log(
     `Accepted LiveLib wish-list URL for user ${wishlistUrl.username}: ${wishlistUrl.url}`
@@ -483,18 +587,16 @@ export async function main(
     console.log(`Skipped ${skippedLitres} book(s) with existing Litres links`);
     console.log(`Enriched ${enrichedLitres} book(s) with new Litres links`);
   }
-  if (shouldEnrichRutracker) {
-    const booksWithRutrackerUrls = books.filter((book) =>
-      hasRutrackerUrls(book)
-    ).length;
-    console.log(`Found RuTracker links for ${booksWithRutrackerUrls} book(s)`);
-    console.log(
-      `Skipped ${skippedRutracker} book(s) with existing RuTracker links`
-    );
-    console.log(
-      `Enriched ${enrichedRutracker} book(s) with new RuTracker links`
-    );
-  }
+  const booksWithRutrackerUrls = books.filter((book) =>
+    hasRutrackerUrls(book)
+  ).length;
+  console.log(`Found RuTracker links for ${booksWithRutrackerUrls} book(s)`);
+  console.log(
+    `Skipped ${skippedRutracker} book(s) with existing RuTracker links`
+  );
+  console.log(
+    `Enriched ${enrichedRutracker} book(s) with new RuTracker links`
+  );
   if (ranAudiobookDurationEnrichment) {
     const booksWithAudiobookUrls = books.filter(
       (book) =>

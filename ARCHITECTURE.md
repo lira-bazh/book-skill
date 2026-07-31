@@ -25,8 +25,9 @@ wish-list пользователя LiveLib в JSON и обогащает кни�
 └── livelib-wishlist
     ├── SKILL.md
     └── scripts
-        ├── livelib-wish-to-json.mjs
+        ├── livelib-wish-to-json.mts
         └── lib
+            ├── *.mts
             ├── audiobook-duration.mjs
             ├── audiobook-page-fields.mjs
             ├── book-details-enrichment.mjs
@@ -42,14 +43,15 @@ wish-list пользователя LiveLib в JSON и обогащает кни�
             └── yandex-books.mjs
 ```
 
-`SKILL.md` описывает пользовательский workflow и ограничения skill. Исполняемый
-вход находится в `scripts/livelib-wish-to-json.mjs`.
+`SKILL.md` описывает пользовательский workflow и ограничения skill. Исходный
+вход находится в `scripts/livelib-wish-to-json.mts`, а исполняемый runtime-код
+собирается TypeScript в `livelib-wishlist/dist`.
 
 ## Слои
 
 ### CLI-оркестрация
 
-`livelib-wish-to-json.mjs` отвечает за:
+`livelib-wish-to-json.mts` отвечает за:
 
 - разбор аргументов CLI;
 - валидацию LiveLib URL;

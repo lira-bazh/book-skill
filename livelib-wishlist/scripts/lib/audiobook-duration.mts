@@ -1,4 +1,5 @@
 import {
+  type AudiobookEntry,
   audiobookEntriesForBook,
   audiobookEntriesMissingNarratorForBook,
   audiobookUrlsForBook,
@@ -22,10 +23,52 @@ import {
 
 export { isAudiobookUrl };
 
+type AudiobookDurationBook = {
+  url?: string | null;
+  audiobook_duration_minutes?: unknown;
+  audiobooks_urls?: unknown;
+  yandex_books_urls?: unknown;
+  litres_urls?: unknown;
+  rutracker_urls?: unknown;
+  [key: string]: unknown;
+} | null | undefined;
+
+type FetchedAudiobookPage = {
+  html?: string | null;
+} | null | undefined;
+
+type FetchAudiobookPage = (options: {
+  url: string;
+  book: EnrichedAudiobookDurationBook;
+}) => Promise<FetchedAudiobookPage> | FetchedAudiobookPage;
+
+type EnrichBooksWithAudiobookDurationOptions = {
+  fetchAudiobookPage?: FetchAudiobookPage;
+  pageDelayMs?: number;
+  onFetchError?: (details: {
+    book: EnrichedAudiobookDurationBook;
+    url: string;
+    error: unknown;
+  }) => void;
+  sleep?: (ms: number) => Promise<unknown>;
+};
+
+type EnrichedAudiobookDurationBook = Record<string, unknown> & {
+  audiobooks_urls?: unknown;
+  audiobook_duration_minutes?: unknown;
+};
+
+type PartialAudiobookEntry = {
+  url: string;
+  title?: string;
+  duration?: number;
+  narrator?: string;
+};
+
 const DURATION_TEXT_RE = /\d+\s*(?:час(?:а|ов)?|ч)(?:\s+\d+\s*(?:мин(?:\.|ут(?:а|ы)?)?|м))?|\d+\s*(?:мин(?:\.|ут(?:а|ы)?)?|м)/iu;
 const DURATION_CLOCK_RE = /\b(\d{2}):(\d{2}):(\d{2})\b/u;
 
-export function parseAudiobookDurationMinutes(value) {
+export function parseAudiobookDurationMinutes(value: unknown): number | null {
   if (typeof value !== 'string') {
     return null;
   }
@@ -41,8 +84,8 @@ export function parseAudiobookDurationMinutes(value) {
 
   const clockMatch = text.match(DURATION_CLOCK_RE);
   if (clockMatch) {
-    const hours = Number.parseInt(clockMatch[1], 10);
-    const minutes = Number.parseInt(clockMatch[2], 10);
+    const hours = Number.parseInt(clockMatch[1] ?? '', 10);
+    const minutes = Number.parseInt(clockMatch[2] ?? '', 10);
     const totalMinutes = hours * 60 + minutes;
 
     return totalMinutes > 0 ? totalMinutes : null;
@@ -53,37 +96,41 @@ export function parseAudiobookDurationMinutes(value) {
 
   const hoursMatch = text.match(/(\d+)\s*(?:час(?:а|ов)?|ч)/u);
   if (hoursMatch) {
-    hours = Number.parseInt(hoursMatch[1], 10);
+    hours = Number.parseInt(hoursMatch[1] ?? '', 10);
   }
 
   const minutesMatch = text.match(/(\d+)\s*(?:мин(?:\.|ут(?:а|ы)?)?|м)/u);
   if (minutesMatch) {
-    minutes = Number.parseInt(minutesMatch[1], 10);
+    minutes = Number.parseInt(minutesMatch[1] ?? '', 10);
   }
 
   const totalMinutes = hours * 60 + minutes;
   return totalMinutes > 0 ? totalMinutes : null;
 }
 
-export function firstAudiobookUrlForBook(book) {
+export function firstAudiobookUrlForBook(book: AudiobookDurationBook): string | null {
   return audiobookUrlsForBook(book)
     .find((url) => isAudiobookUrl(url) || isRutrackerUrl(url)) ?? null;
 }
 
-export function firstAudiobookEntryMissingNarratorForBook(book) {
+export function firstAudiobookEntryMissingNarratorForBook(
+  book: AudiobookDurationBook
+): AudiobookEntry | null {
   return audiobookEntriesMissingNarratorForBook(book)
     .find((entry) => isAudiobookUrl(entry.url) || isRutrackerUrl(entry.url)) ?? null;
 }
 
-export function hasRecordedAudiobookDuration(book) {
+export function hasRecordedAudiobookDuration(book: AudiobookDurationBook): boolean {
   return Number.isFinite(book?.audiobook_duration_minutes);
 }
 
-export function hasRecordedAudiobookEntryDuration(entry) {
-  return Number.isFinite(entry?.duration);
+export function hasRecordedAudiobookEntryDuration(entry: unknown): boolean {
+  return Number.isFinite((entry as { duration?: unknown } | null | undefined)?.duration);
 }
 
-export function audiobookEntriesMissingDurationForBook(book) {
+export function audiobookEntriesMissingDurationForBook(
+  book: AudiobookDurationBook
+): AudiobookEntry[] {
   return audiobookEntriesForBook(book)
     .filter((entry) => (
       (isAudiobookUrl(entry.url) || isRutrackerUrl(entry.url))
@@ -91,10 +138,12 @@ export function audiobookEntriesMissingDurationForBook(book) {
     ));
 }
 
-export function averageAudiobookEntryDurationMinutesForBook(book) {
+export function averageAudiobookEntryDurationMinutesForBook(
+  book: AudiobookDurationBook
+): number | null {
   const durations = audiobookEntriesForBook(book)
     .map((entry) => entry.duration)
-    .filter(Number.isFinite);
+    .filter((duration): duration is number => Number.isFinite(duration));
 
   if (durations.length === 0) {
     return null;
@@ -104,7 +153,9 @@ export function averageAudiobookEntryDurationMinutesForBook(book) {
   return Math.round(totalDuration / durations.length);
 }
 
-export function withAverageAudiobookDuration(book) {
+export function withAverageAudiobookDuration<Book extends AudiobookDurationBook>(
+  book: Book
+): Book | (NonNullable<Book> & { audiobook_duration_minutes: number }) {
   const averageDuration = averageAudiobookEntryDurationMinutesForBook(book);
   if (averageDuration === null) {
     return book;
@@ -113,10 +164,10 @@ export function withAverageAudiobookDuration(book) {
   return {
     ...book,
     audiobook_duration_minutes: averageDuration,
-  };
+  } as NonNullable<Book> & { audiobook_duration_minutes: number };
 }
 
-export function extractAudiobookDurationMinutes(html) {
+export function extractAudiobookDurationMinutes(html: unknown): number | null {
   if (typeof html !== 'string' || !html.trim()) {
     return null;
   }
@@ -142,7 +193,7 @@ export function extractAudiobookDurationMinutes(html) {
   return durationMatch ? parseAudiobookDurationMinutes(durationMatch[0]) : null;
 }
 
-export function extractAudiobookNarrator(html) {
+export function extractAudiobookNarrator(html: unknown): string | null {
   if (typeof html !== 'string' || !html.trim()) {
     return null;
   }
@@ -161,16 +212,16 @@ export function extractAudiobookNarrator(html) {
   return null;
 }
 
-export function hasAudiobookEntriesMissingNarrator(book) {
+export function hasAudiobookEntriesMissingNarrator(book: AudiobookDurationBook): boolean {
   return firstAudiobookEntryMissingNarratorForBook(book) !== null;
 }
 
-export function hasAudiobookEntriesMissingDuration(book) {
+export function hasAudiobookEntriesMissingDuration(book: AudiobookDurationBook): boolean {
   return audiobookEntriesMissingDurationForBook(book).length > 0;
 }
 
 export async function enrichBooksWithAudiobookDuration(
-  books,
+  books: readonly AudiobookDurationBook[],
   {
     fetchAudiobookPage,
     pageDelayMs = 0,
@@ -178,8 +229,8 @@ export async function enrichBooksWithAudiobookDuration(
     sleep = (ms) => new Promise((resolve) => {
       setTimeout(resolve, ms);
     }),
-  } = {},
-) {
+  }: EnrichBooksWithAudiobookDurationOptions = {},
+): Promise<EnrichedAudiobookDurationBook[]> {
   if (!Array.isArray(books)) {
     throw new Error('Books must be an array');
   }
@@ -188,7 +239,7 @@ export async function enrichBooksWithAudiobookDuration(
     throw new Error('Audiobook page fetcher is required');
   }
 
-  const enrichedBooks = [];
+  const enrichedBooks: EnrichedAudiobookDurationBook[] = [];
 
   for (const book of books) {
     const audiobookEntries = audiobookEntriesForBook(book)
@@ -201,17 +252,17 @@ export async function enrichBooksWithAudiobookDuration(
       ));
 
     if (entriesToFetch.length === 0) {
-      enrichedBooks.push({ ...book });
+      enrichedBooks.push(copyBook(book));
       continue;
     }
 
-    const nextBook = { ...book };
+    const nextBook = copyBook(book);
 
     for (const entry of entriesToFetch) {
       const audiobookUrl = entry.url;
-      let title = null;
-      let duration = null;
-      let narrator = null;
+      let title: string | null = null;
+      let duration: number | null = null;
+      let narrator: string | null = null;
 
       try {
         const page = await fetchAudiobookPage({ url: audiobookUrl, book: nextBook });
@@ -231,7 +282,7 @@ export async function enrichBooksWithAudiobookDuration(
         }
       }
 
-      const enrichedEntry = { url: audiobookUrl };
+      const enrichedEntry: PartialAudiobookEntry = { url: audiobookUrl };
       if (title) {
         enrichedEntry.title = title;
       }
@@ -254,4 +305,8 @@ export async function enrichBooksWithAudiobookDuration(
   }
 
   return enrichedBooks;
+}
+
+function copyBook(book: AudiobookDurationBook): EnrichedAudiobookDurationBook {
+  return typeof book === 'object' && book !== null ? { ...book } : {};
 }

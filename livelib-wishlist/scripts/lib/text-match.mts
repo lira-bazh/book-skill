@@ -1,10 +1,10 @@
-export function cleanText(value) {
+export function cleanText(value: unknown): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim();
 }
 
-export function stripParentheticalText(value) {
+export function stripParentheticalText(value: unknown): string {
   let text = String(value ?? '');
-  let previousText;
+  let previousText: string;
 
   do {
     previousText = text;
@@ -14,19 +14,19 @@ export function stripParentheticalText(value) {
   return cleanText(text);
 }
 
-export function extractHrefValues(html) {
-  const hrefs = [];
+export function extractHrefValues(html: string): string[] {
+  const hrefs: string[] = [];
   const linkRe = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
-  let match;
+  let match: RegExpExecArray | null;
 
   while ((match = linkRe.exec(html)) !== null) {
-    hrefs.push(match[1] ?? match[2] ?? match[3]);
+    hrefs.push(match[1] ?? match[2] ?? match[3] ?? '');
   }
 
   return hrefs;
 }
 
-export function normalizeForMatch(value) {
+export function normalizeForMatch(value: unknown): string {
   return stripParentheticalText(value)
     .toLocaleLowerCase('ru-RU')
     .replaceAll('ё', 'е')
@@ -34,13 +34,17 @@ export function normalizeForMatch(value) {
     .trim();
 }
 
-export function matchTokens(value) {
+export function matchTokens(value: unknown): string[] {
   return normalizeForMatch(value)
     .split(' ')
     .filter((token) => token.length > 1);
 }
 
-export function hasTokenOverlap(sourceValue, candidateValue, threshold = 0.8) {
+export function hasTokenOverlap(
+  sourceValue: unknown,
+  candidateValue: unknown,
+  threshold = 0.8
+): boolean {
   const sourceTokens = matchTokens(sourceValue);
   if (sourceTokens.length === 0) {
     return false;

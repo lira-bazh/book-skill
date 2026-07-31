@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, type ExecFileOptions } from 'node:child_process';
 
 import {
   audiobookEntriesMissingDurationForBook,
@@ -14,6 +14,7 @@ import {
   withAverageAudiobookDuration,
 } from './audiobook-duration.mjs';
 import {
+  type AudiobookEntryInput,
   audiobookEntriesForBook,
   isRutrackerUrl,
   mergeAudiobookUrls,
@@ -27,6 +28,84 @@ import {
 } from './livelib-book-page.mjs';
 import { extractRutrackerAudiobookTitle } from './rutracker-books.mjs';
 
+type BookDetailsBook = Record<string, unknown> & {
+  url?: string | null;
+  audiobooks_urls?: unknown;
+  yandex_books_urls?: unknown;
+  litres_urls?: unknown;
+  rutracker_urls?: unknown;
+  audiobook_duration_minutes?: unknown;
+};
+
+type FetchedPage = {
+  url?: string | null;
+  html?: string | null;
+} | null | undefined;
+
+type PageFetcher = (options: {
+  url: string;
+  book: BookDetailsBook;
+}) => Promise<FetchedPage> | FetchedPage;
+
+type FetchErrorHandler = (details: {
+  book: BookDetailsBook;
+  url: string;
+  error: unknown;
+}) => void;
+
+type SleepFn = (ms: number) => Promise<unknown>;
+type SleepOptions = SleepFn | Partial<Record<'audiobook' | 'bookPage', SleepFn>>;
+
+type EnrichBookWithMissingDetailsOptions = {
+  fetchAudiobookPage?: PageFetcher;
+  fetchBookPage?: PageFetcher;
+  onAudiobookFetchError?: FetchErrorHandler;
+  onBookPageFetchError?: FetchErrorHandler;
+  pageDelayMs?: number;
+  sleep?: SleepOptions;
+};
+
+type EnrichBooksWithMissingDetailsOptions = EnrichBookWithMissingDetailsOptions & {
+  onBookProcessed?: (details: { book: BookDetailsBook }) => void;
+};
+
+type BookDetailsStats = {
+  skippedAudiobookDuration: number;
+  enrichedAudiobookDuration: number;
+  skippedAudiobookTitle: number;
+  enrichedAudiobookTitle: number;
+  skippedAudiobookNarrator: number;
+  enrichedAudiobookNarrator: number;
+  skippedBookPageDetails: number;
+  enrichedBookDescriptions: number;
+  enrichedBookImages: number;
+  enrichedBookGenres: number;
+};
+
+type MissingBookDetailsState = {
+  hasDescription: boolean;
+  hasImage: boolean;
+  hasGenre: boolean;
+  needsBookPageDetails: boolean;
+};
+
+type BookDetailsWithDescription = {
+  description: string | null;
+  image: string | null;
+  genre: string | null;
+};
+
+type PartialEnrichedAudiobookEntry = AudiobookEntryInput & {
+  url: string;
+  title?: string;
+  duration?: number;
+  narrator?: string;
+};
+
+type ExecErrorWithStderr = Error & {
+  stderr?: string;
+};
+
 const RUTRACKER_TOPIC_PATH = '/forum/viewtopic.php';
 const RUTRACKER_CURL_TIMEOUT_MS = 30_000;
 const RUTRACKER_CURL_MAX_BUFFER_BYTES = 20 * 1024 * 1024;
@@ -34,7 +113,7 @@ const YANDEX_BOOKS_AUDIOBOOK_PATH_RE = /^\/(?:[a-z]{2}-[a-z]{2}\/)?audiobooks?\/
 const LIVELIB_BOOK_PATH_RE = /^\/book\/[^/]+\/?$/u;
 const LITRES_AUDIOBOOK_PATH_RE = /^\/audiobook\/[^/]+(?:\/[^/]+)*\/?$/u;
 
-function createInitialBookDetailsStats() {
+function createInitialBookDetailsStats(): BookDetailsStats {
   return {
     skippedAudiobookDuration: 0,
     enrichedAudiobookDuration: 0,
@@ -49,7 +128,7 @@ function createInitialBookDetailsStats() {
   };
 }
 
-function getMissingBookDetailsState(book) {
+function getMissingBookDetailsState(book: BookDetailsBook): MissingBookDetailsState {
   return {
     hasDescription: hasRecordedBookPageDescription(book),
     hasImage: hasRecordedBookPageImage(book),
@@ -58,19 +137,19 @@ function getMissingBookDetailsState(book) {
   };
 }
 
-function addBookDetailsStats(target, source) {
-  for (const key of Object.keys(target)) {
+function addBookDetailsStats(target: BookDetailsStats, source: BookDetailsStats): void {
+  for (const key of Object.keys(target) as (keyof BookDetailsStats)[]) {
     target[key] += source[key] ?? 0;
   }
 }
 
-function defaultSleep(ms) {
+function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
 }
 
-function getSleepFn(sleep, key) {
+function getSleepFn(sleep: SleepOptions, key: 'audiobook' | 'bookPage'): SleepFn {
   if (typeof sleep === 'function') {
     return sleep;
   }
@@ -82,22 +161,22 @@ function getSleepFn(sleep, key) {
   return defaultSleep;
 }
 
-function isRutrackerTopicUrl(rawUrl) {
+function isRutrackerTopicUrl(rawUrl: AudiobookEntryInput): boolean {
   if (!isRutrackerUrl(rawUrl)) {
     return false;
   }
 
   try {
-    const url = new URL(rawUrl);
+    const url = new URL(String(rawUrl));
     return url.pathname === RUTRACKER_TOPIC_PATH && url.searchParams.has('t');
   } catch {
     return false;
   }
 }
 
-function isYandexBooksAudiobookUrl(rawUrl) {
+function isYandexBooksAudiobookUrl(rawUrl: unknown): boolean {
   try {
-    const url = new URL(rawUrl);
+    const url = new URL(String(rawUrl));
     return (
       url.hostname.toLowerCase().startsWith('books.yandex.')
       && YANDEX_BOOKS_AUDIOBOOK_PATH_RE.test(url.pathname)
@@ -107,9 +186,9 @@ function isYandexBooksAudiobookUrl(rawUrl) {
   }
 }
 
-function isLiveLibBookUrl(rawUrl) {
+function isLiveLibBookUrl(rawUrl: unknown): boolean {
   try {
-    const url = new URL(rawUrl);
+    const url = new URL(String(rawUrl));
     const hostname = url.hostname.toLowerCase();
     return (
       (hostname === 'www.livelib.ru' || hostname === 'livelib.ru')
@@ -120,9 +199,9 @@ function isLiveLibBookUrl(rawUrl) {
   }
 }
 
-function isLitresAudiobookUrl(rawUrl) {
+function isLitresAudiobookUrl(rawUrl: unknown): boolean {
   try {
-    const url = new URL(rawUrl);
+    const url = new URL(String(rawUrl));
     const hostname = url.hostname.toLowerCase();
     return (
       (hostname === 'www.litres.ru' || hostname === 'litres.ru')
@@ -133,21 +212,26 @@ function isLitresAudiobookUrl(rawUrl) {
   }
 }
 
-function execFileBuffer(command, args, options) {
+function execFileBuffer(
+  command: string,
+  args: readonly string[],
+  options: ExecFileOptions
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { ...options, encoding: 'buffer' }, (error, stdout, stderr) => {
+    execFile(command, [...args], { ...options, encoding: 'buffer' }, (error, stdout, stderr) => {
       if (error) {
-        error.stderr = stderr?.toString('utf8') ?? '';
-        reject(error);
+        const errorWithStderr = error as ExecErrorWithStderr;
+        errorWithStderr.stderr = stderr?.toString('utf8') ?? '';
+        reject(errorWithStderr);
         return;
       }
 
-      resolve(stdout);
+      resolve(Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout));
     });
   });
 }
 
-async function fetchRutrackerTopicPageWithCurl(url) {
+async function fetchRutrackerTopicPageWithCurl(url: string): Promise<{ url: string; html: string }> {
   const htmlBuffer = await execFileBuffer('curl', [
     '-sSL',
     '--max-time',
@@ -164,7 +248,7 @@ async function fetchRutrackerTopicPageWithCurl(url) {
   };
 }
 
-async function fetchUtf8PageWithCurl(url) {
+async function fetchUtf8PageWithCurl(url: string): Promise<{ url: string; html: string }> {
   const htmlBuffer = await execFileBuffer('curl', [
     '-sSL',
     '--max-time',
@@ -181,7 +265,15 @@ async function fetchUtf8PageWithCurl(url) {
   };
 }
 
-async function fetchAudiobookPageForDetails({ url, book, fetchAudiobookPage }) {
+async function fetchAudiobookPageForDetails({
+  url,
+  book,
+  fetchAudiobookPage,
+}: {
+  url: string;
+  book: BookDetailsBook;
+  fetchAudiobookPage?: PageFetcher;
+}): Promise<FetchedPage> {
   if (isRutrackerTopicUrl(url)) {
     try {
       return await fetchRutrackerTopicPageWithCurl(url);
@@ -219,7 +311,15 @@ async function fetchAudiobookPageForDetails({ url, book, fetchAudiobookPage }) {
   return fetchAudiobookPage({ url, book });
 }
 
-async function fetchBookPageForDetails({ url, book, fetchBookPage }) {
+async function fetchBookPageForDetails({
+  url,
+  book,
+  fetchBookPage,
+}: {
+  url: string;
+  book: BookDetailsBook;
+  fetchBookPage?: PageFetcher;
+}): Promise<FetchedPage> {
   if (isLiveLibBookUrl(url)) {
     try {
       return await fetchUtf8PageWithCurl(url);
@@ -238,7 +338,7 @@ async function fetchBookPageForDetails({ url, book, fetchBookPage }) {
 }
 
 export async function enrichBookWithMissingDetails(
-  book,
+  book: BookDetailsBook,
   {
     fetchAudiobookPage,
     fetchBookPage,
@@ -246,9 +346,17 @@ export async function enrichBookWithMissingDetails(
     onBookPageFetchError,
     pageDelayMs = 0,
     sleep = defaultSleep,
-  } = {},
-) {
-  const nextBook = { ...book };
+  }: EnrichBookWithMissingDetailsOptions = {},
+): Promise<{
+  book: BookDetailsBook;
+  stats: BookDetailsStats;
+  needs: {
+    audiobookDuration: boolean;
+    audiobookNarrator: boolean;
+    bookPageDetails: boolean;
+  };
+}> {
+  const nextBook: BookDetailsBook = { ...book };
   const stats = createInitialBookDetailsStats();
   const audiobookEntries = audiobookEntriesForBook(nextBook)
     .filter((entry) => (
@@ -282,7 +390,7 @@ export async function enrichBookWithMissingDetails(
       });
       const html = page?.html ?? '';
 
-      const enrichedEntry = { url: fetchUrl };
+      const enrichedEntry: PartialEnrichedAudiobookEntry = { url: fetchUrl };
       if (isRutrackerTopicUrl(fetchUrl) && !audiobookEntry.title) {
         const title = extractRutrackerAudiobookTitle(html);
         if (title) {
@@ -328,17 +436,20 @@ export async function enrichBookWithMissingDetails(
   if (!bookDetailsState.needsBookPageDetails) {
     stats.skippedBookPageDetails += 1;
   } else if (
-    nextBook.url
+    typeof nextBook.url === 'string'
     && (typeof fetchBookPage === 'function' || isLiveLibBookUrl(nextBook.url))
   ) {
-    let details = { description: null, image: null, genre: null };
+    let details: BookDetailsWithDescription = { description: null, image: null, genre: null };
     try {
       const page = await fetchBookPageForDetails({
         url: nextBook.url,
         book: nextBook,
         fetchBookPage,
       });
-      details = extractBookPageDetails(page?.html ?? '', page?.url ?? nextBook.url);
+      details = {
+        description: null,
+        ...extractBookPageDetails(page?.html ?? '', page?.url ?? nextBook.url),
+      };
     } catch (error) {
       if (typeof onBookPageFetchError === 'function') {
         onBookPageFetchError({ book: nextBook, url: nextBook.url, error });
@@ -365,7 +476,7 @@ export async function enrichBookWithMissingDetails(
     }
   }
 
-  const bookWithAverageAudiobookDuration = withAverageAudiobookDuration(nextBook);
+  const bookWithAverageAudiobookDuration = withAverageAudiobookDuration(nextBook) as BookDetailsBook;
 
   return {
     book: bookWithAverageAudiobookDuration,
@@ -378,13 +489,19 @@ export async function enrichBookWithMissingDetails(
   };
 }
 
-export async function enrichBooksWithMissingDetails(books, options = {}) {
+export async function enrichBooksWithMissingDetails(
+  books: readonly BookDetailsBook[],
+  options: EnrichBooksWithMissingDetailsOptions = {}
+): Promise<{
+  books: BookDetailsBook[];
+  stats: BookDetailsStats;
+}> {
   if (!Array.isArray(books)) {
     throw new Error('Books must be an array');
   }
 
   const { onBookProcessed, ...bookOptions } = options;
-  const enrichedBooks = [];
+  const enrichedBooks: BookDetailsBook[] = [];
   const stats = createInitialBookDetailsStats();
 
   for (const book of books) {

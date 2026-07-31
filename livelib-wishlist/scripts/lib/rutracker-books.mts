@@ -1,9 +1,70 @@
-import { load } from "cheerio";
+import { load, type CheerioAPI } from "cheerio";
 
 import { extractLabeledPageTextValue } from "./audiobook-page-fields.mjs";
 import { buildBookSearchQuery } from "./book-search-query.mjs";
-import { isRutrackerUrl, mergeAudiobookUrls } from "./book-url-fields.mjs";
+import { type AudiobookEntryInput, isRutrackerUrl, mergeAudiobookUrls } from "./book-url-fields.mjs";
 import { cleanText, normalizeForMatch, stripParentheticalText } from "./text-match.mjs";
+
+type BookLike = Record<string, unknown> & {
+  title?: unknown;
+  authors?: unknown;
+  url?: string;
+  audiobooks_urls?: unknown;
+  rutracker_urls?: unknown;
+};
+
+type RutrackerSearchResult = {
+  title: string;
+  url: string;
+  narrator: string | null;
+};
+
+type RutrackerAudiobookEntry = {
+  url: string;
+  narrator: string | null;
+};
+
+type SearchPage = {
+  url: string;
+  html: string;
+};
+
+type FilterOptions = {
+  maxResults?: number;
+};
+
+type SearchPageFetcher = (options: {
+  book: BookLike;
+  query: string;
+  searchUrl: string;
+  profileDir?: unknown;
+}) => Promise<SearchPage> | SearchPage;
+
+type EnrichBooksWithRutrackerUrlsOptions = {
+  existingBooks?: readonly BookLike[];
+  fetchSearchPage?: SearchPageFetcher;
+  profileDir?: unknown;
+  maxResults?: number;
+  delayMs?: number;
+  onSearchError?: (details: {
+    book: BookLike;
+    error: unknown;
+  }) => void;
+  sleep?: (ms: number) => Promise<unknown>;
+};
+
+type FetchRutrackerSearchPageOptions = {
+  query: unknown;
+  searchUrl?: string;
+  fetchImpl?: typeof globalThis.fetch;
+};
+
+type CheerioArgument = Parameters<CheerioAPI>[0];
+type LinkedNode = {
+  type?: string;
+  name?: string;
+  nextSibling?: CheerioArgument | null;
+};
 
 const RUTRACKER_HOSTNAME = "rutracker.org";
 const RUTRACKER_BASE_URL = `https://${RUTRACKER_HOSTNAME}/forum/`;
@@ -25,7 +86,7 @@ const AUTHOR_ET_AL_RE = /(?:^|[\s,;])и\s+др\.?$/iu;
 const AUTHOR_SEPARATOR_RE = /\s*(?:[,;]|\s+[&+]\s+)\s*/u;
 const TITLE_MATCH_STOP_RE = /[.:?]/u;
 
-export function extractRutrackerAudiobookTitle(html) {
+export function extractRutrackerAudiobookTitle(html: unknown): string | null {
   const firstPostHtml = extractRutrackerFirstTopicPostHtml(html);
   if (!firstPostHtml) {
     return null;
@@ -50,7 +111,7 @@ export function extractRutrackerAudiobookTitle(html) {
     ?? extractRutrackerAudiobookTitleFromPostHeading(firstPostHtml);
 }
 
-export function extractRutrackerAudiobookDurationText(html) {
+export function extractRutrackerAudiobookDurationText(html: unknown): string | null {
   const firstPostHtml = extractRutrackerFirstTopicPostHtml(html);
   if (!firstPostHtml) {
     return null;
@@ -62,7 +123,7 @@ export function extractRutrackerAudiobookDurationText(html) {
     });
 }
 
-export function extractRutrackerAudiobookNarrator(html) {
+export function extractRutrackerAudiobookNarrator(html: unknown): string | null {
   const firstPostHtml = extractRutrackerFirstTopicPostHtml(html);
   if (!firstPostHtml) {
     return null;
@@ -78,7 +139,7 @@ export function extractRutrackerAudiobookNarrator(html) {
     );
 }
 
-function extractRutrackerFirstTopicPostHtml(html) {
+function extractRutrackerFirstTopicPostHtml(html: unknown): string | null {
   if (typeof html !== "string" || !html.trim()) {
     return null;
   }
@@ -92,7 +153,7 @@ function extractRutrackerFirstTopicPostHtml(html) {
   return $.html(firstPost);
 }
 
-function extractRutrackerDurationTimeAfterLabel(html) {
+function extractRutrackerDurationTimeAfterLabel(html: unknown): string | null {
   if (typeof html !== "string" || !html.trim()) {
     return null;
   }
@@ -109,11 +170,14 @@ function extractRutrackerDurationTimeAfterLabel(html) {
   return text.slice(labelIndex).match(RUTRACKER_DURATION_TIME_RE)?.[0] ?? null;
 }
 
-function normalizeRutrackerAudiobookTitle(value) {
+function normalizeRutrackerAudiobookTitle(value: unknown): string | null {
   return cleanText(value) || null;
 }
 
-function normalizeRutrackerAudiobookTitleWithAuthor(author, title) {
+function normalizeRutrackerAudiobookTitleWithAuthor(
+  author: unknown,
+  title: unknown
+): string | null {
   const normalizedTitle = normalizeRutrackerAudiobookTitle(title);
   if (!normalizedTitle) {
     return null;
@@ -133,7 +197,7 @@ function normalizeRutrackerAudiobookTitleWithAuthor(author, title) {
   return `${normalizedAuthor} - ${normalizedTitle}`;
 }
 
-function extractRutrackerAudiobookTitleFromPostHeading(html) {
+function extractRutrackerAudiobookTitleFromPostHeading(html: unknown): string | null {
   if (typeof html !== "string" || !html.trim()) {
     return null;
   }
@@ -144,10 +208,11 @@ function extractRutrackerAudiobookTitleFromPostHeading(html) {
     return null;
   }
 
-  const parts = [];
+  const parts: string[] = [];
   for (const child of firstPost.contents().toArray()) {
     const node = $(child);
-    if (child.type === "tag" && (child.name === "br" || node.hasClass("post-br"))) {
+    const linkedChild = child as LinkedNode;
+    if (linkedChild.type === "tag" && (linkedChild.name === "br" || node.hasClass("post-br"))) {
       break;
     }
 
@@ -160,7 +225,7 @@ function extractRutrackerAudiobookTitleFromPostHeading(html) {
   return normalizeRutrackerAudiobookTitle(parts.join(" "));
 }
 
-function isRutrackerTopicHtml(html) {
+function isRutrackerTopicHtml(html: unknown): boolean {
   if (typeof html !== "string" || !html.trim()) {
     return false;
   }
@@ -169,7 +234,7 @@ function isRutrackerTopicHtml(html) {
   return $(".post_body").length > 0;
 }
 
-function extractRutrackerAudiobookNarratorFromPostBody(html) {
+function extractRutrackerAudiobookNarratorFromPostBody(html: unknown): string | null {
   if (typeof html !== "string" || !html.trim()) {
     return null;
   }
@@ -185,39 +250,45 @@ function extractRutrackerAudiobookNarratorFromPostBody(html) {
     .toArray()
     .find((element) =>
       RUTRACKER_NARRATOR_LABELS.includes(cleanText($(element).text()).replace(/:$/u, ""))
-    );
+    ) as LinkedNode | undefined;
   if (!label) {
     return null;
   }
 
-  const parts = [];
+  const parts: string[] = [];
   let sibling = label.nextSibling;
   while (sibling) {
     const node = $(sibling);
-    if (sibling.type === "tag" && sibling.name === "br") {
+    const linkedSibling = sibling as LinkedNode;
+    if (linkedSibling.type === "tag" && linkedSibling.name === "br") {
       break;
     }
-    if (sibling.type === "tag" && node.hasClass("post-b")) {
+    if (linkedSibling.type === "tag" && node.hasClass("post-b")) {
       break;
     }
 
     parts.push(node.text());
-    sibling = sibling.nextSibling;
+    sibling = linkedSibling.nextSibling;
   }
 
   return cleanText(parts.join(" ").replace(/^:/u, "")) || null;
 }
 
-export function buildRutrackerSearchQuery(book) {
-  return buildBookSearchQuery(book);
+export function buildRutrackerSearchQuery(book: BookLike | null | undefined): string {
+  return buildBookSearchQuery({
+    title: typeof book?.title === "string" ? book.title : null,
+    authors: Array.isArray(book?.authors) ? book.authors : null,
+  });
 }
 
 export function buildRutrackerSearchUrl(
-  query,
+  query: unknown,
   {
     baseUrl = RUTRACKER_BASE_URL
+  }: {
+    baseUrl?: string;
   } = {}
-) {
+): string {
   const normalizedQuery = cleanText(query);
   if (!normalizedQuery) {
     throw new Error("RuTracker search query must not be empty");
@@ -228,10 +299,13 @@ export function buildRutrackerSearchUrl(
   return url.toString();
 }
 
-export function normalizeRutrackerUrl(rawUrl, baseUrl = RUTRACKER_BASE_URL) {
-  let parsed;
+export function normalizeRutrackerUrl(
+  rawUrl: string | undefined,
+  baseUrl = RUTRACKER_BASE_URL
+): string | null {
+  let parsed: URL;
   try {
-    parsed = new URL(rawUrl, baseUrl);
+    parsed = new URL(rawUrl ?? "", baseUrl);
   } catch {
     return null;
   }
@@ -259,10 +333,13 @@ export function normalizeRutrackerUrl(rawUrl, baseUrl = RUTRACKER_BASE_URL) {
   return `https://${RUTRACKER_HOSTNAME}/forum/viewtopic.php?t=${topicId}`;
 }
 
-export function extractRutrackerSearchResultsFromHtml(html, baseUrl = RUTRACKER_BASE_URL) {
+export function extractRutrackerSearchResultsFromHtml(
+  html: string,
+  baseUrl = RUTRACKER_BASE_URL
+): RutrackerSearchResult[] {
   const $ = load(html);
-  const results = [];
-  const seen = new Set();
+  const results: RutrackerSearchResult[] = [];
+  const seen = new Set<string>();
 
   for (const element of $('a[href*="viewtopic.php?t="]').toArray()) {
     const link = $(element);
@@ -288,11 +365,11 @@ export function extractRutrackerSearchResultsFromHtml(html, baseUrl = RUTRACKER_
   return results;
 }
 
-function isExcludedRutrackerSearchRow(rowText) {
-  return RUTRACKER_EXCLUDED_SEARCH_ROW_RE.test(rowText);
+function isExcludedRutrackerSearchRow(rowText: unknown): boolean {
+  return RUTRACKER_EXCLUDED_SEARCH_ROW_RE.test(cleanText(rowText));
 }
 
-export function extractRutrackerNarratorFromBracketsText(value) {
+export function extractRutrackerNarratorFromBracketsText(value: unknown): string | null {
   const text = cleanText(value);
   if (!text) {
     return null;
@@ -308,15 +385,15 @@ export function extractRutrackerNarratorFromBracketsText(value) {
   return null;
 }
 
-export function filterRutrackerResultsForBook(
-  results,
-  book,
-  { maxResults = Infinity } = {}
-) {
+export function filterRutrackerResultsForBook<Result extends RutrackerSearchResult>(
+  results: readonly Result[],
+  book: BookLike | null | undefined,
+  { maxResults = Infinity }: FilterOptions = {}
+): Result[] {
   const titleTokens = normalizedBookTitleWords(book);
   const authorTokens = authorLastNameWords(book?.authors);
-  const filtered = [];
-  const seen = new Set();
+  const filtered: Result[] = [];
+  const seen = new Set<string>();
 
   if (titleTokens.length === 0) {
     return filtered;
@@ -348,18 +425,18 @@ export function filterRutrackerResultsForBook(
   return filtered;
 }
 
-function normalizedWords(value) {
+function normalizedWords(value: unknown): string[] {
   return normalizeForMatch(value).split(" ").filter(Boolean);
 }
 
-function normalizedBookTitleWords(book) {
+function normalizedBookTitleWords(book: BookLike | null | undefined): string[] {
   const title = cleanText(
     stripParentheticalText(book?.title).split(TITLE_MATCH_STOP_RE, 1)[0]
   );
   return normalizedWords(title);
 }
 
-function authorLastNameWords(authors) {
+function authorLastNameWords(authors: unknown): string[] {
   if (!Array.isArray(authors)) {
     return [];
   }
@@ -369,14 +446,14 @@ function authorLastNameWords(authors) {
       cleanText(author).replace(AUTHOR_ET_AL_RE, "").split(AUTHOR_SEPARATOR_RE)
     )
     .map((author) => normalizedWords(author).at(-1))
-    .filter(Boolean);
+    .filter((author): author is string => Boolean(author));
 }
 
 function extractRutrackerAudiobookEntriesFromSearchPage(
-  searchPage,
-  book,
-  options
-) {
+  searchPage: SearchPage | null | undefined,
+  book: BookLike,
+  options: FilterOptions
+): RutrackerAudiobookEntry[] {
   if (typeof searchPage?.html !== "string") {
     return [];
   }
@@ -395,7 +472,11 @@ export async function fetchRutrackerSearchPage({
   query,
   searchUrl,
   fetchImpl = globalThis.fetch
-}) {
+}: FetchRutrackerSearchPageOptions): Promise<{
+  query: string;
+  url: string;
+  html: string;
+}> {
   if (typeof fetchImpl !== "function") {
     throw new Error("Fetch API is not available for RuTracker search");
   }
@@ -418,9 +499,12 @@ export async function fetchRutrackerSearchPage({
   };
 }
 
-function existingRutrackerUrlsForBook(book, existingBooksByUrl) {
+function existingRutrackerUrlsForBook(
+  book: BookLike,
+  existingBooksByUrl: ReadonlyMap<string | undefined, BookLike>
+): AudiobookEntryInput[] | null {
   const existingBook = existingBooksByUrl.get(book?.url);
-  const urls = [
+  const urls: AudiobookEntryInput[] = [
     ...(Array.isArray(book?.audiobooks_urls)
       ? book.audiobooks_urls.filter((url) => isRutrackerUrl(url))
       : []),
@@ -438,7 +522,10 @@ function existingRutrackerUrlsForBook(book, existingBooksByUrl) {
   return urls;
 }
 
-export function countBooksWithExistingRutrackerUrls(books, existingBooks = []) {
+export function countBooksWithExistingRutrackerUrls(
+  books: readonly BookLike[],
+  existingBooks: readonly BookLike[] = []
+): number {
   const existingBooksByUrl = new Map(
     existingBooks.filter((book) => book?.url).map((book) => [book.url, book])
   );
@@ -449,7 +536,7 @@ export function countBooksWithExistingRutrackerUrls(books, existingBooks = []) {
 }
 
 export async function enrichBooksWithRutrackerUrls(
-  books,
+  books: readonly BookLike[],
   {
     existingBooks = [],
     fetchSearchPage,
@@ -458,8 +545,8 @@ export async function enrichBooksWithRutrackerUrls(
     delayMs = 0,
     onSearchError,
     sleep = defaultSleep
-  } = {}
-) {
+  }: EnrichBooksWithRutrackerUrlsOptions = {}
+): Promise<BookLike[]> {
   if (typeof fetchSearchPage !== "function") {
     throw new Error("RuTracker search page fetcher is required");
   }
@@ -467,7 +554,7 @@ export async function enrichBooksWithRutrackerUrls(
   const existingBooksByUrl = new Map(
     existingBooks.filter((book) => book?.url).map((book) => [book.url, book])
   );
-  const enrichedBooks = [];
+  const enrichedBooks: BookLike[] = [];
 
   for (const book of books) {
     const { rutracker_urls: _legacyRutrackerUrls, ...bookWithoutRutrackerUrls } = book;
@@ -529,7 +616,7 @@ export async function enrichBooksWithRutrackerUrls(
   return enrichedBooks;
 }
 
-function defaultSleep(ms) {
+function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });

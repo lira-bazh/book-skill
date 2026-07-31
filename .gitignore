@@ -1,4 +1,5 @@
 .browser-profile/
+livelib-wishlist/dist/
 node_modules/
 __pycache__/
 *.py[cod]

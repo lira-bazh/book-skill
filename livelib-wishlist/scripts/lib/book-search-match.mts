@@ -2,12 +2,27 @@ import { appendFileSync } from 'node:fs';
 
 import { cleanText, normalizeForMatch } from './text-match.mjs';
 
+type SearchBook = {
+  title?: unknown;
+  authors?: unknown;
+} | null | undefined;
+
+type SearchResult = {
+  url?: string | null;
+  title?: unknown;
+  authors?: unknown;
+} | null | undefined;
+
+type FilterSearchResultsOptions = {
+  maxResults?: number;
+};
+
 const AUTHOR_ET_AL_RE = /(?:^|[\s,;])и\s+др\.?$/iu;
 const AUTHOR_SEPARATOR_RE = /\s*(?:[,;]|\s+[&+]\s+)\s*/u;
 const TITLE_MATCH_STOP_RE = /[.:?]/u;
 const SEARCH_MATCH_LOG_FILE = process.env.BOOK_SEARCH_MATCH_LOG_FILE ?? '/tmp/book-search-match.log';
 
-export function isSearchResultSimilarToBook(result, book) {
+export function isSearchResultSimilarToBook(result: SearchResult, book: SearchBook): boolean {
   if (!isSearchResultTitleSimilarToBook(book?.title, result?.title)) {
     return false;
   }
@@ -15,15 +30,15 @@ export function isSearchResultSimilarToBook(result, book) {
   return hasMatchingAuthorLastName(book?.authors, result?.authors);
 }
 
-export function filterSearchResultsForBook(
-  results,
-  book,
+export function filterSearchResultsForBook<Result extends SearchResult>(
+  results: readonly Result[],
+  book: SearchBook,
   {
     maxResults = Infinity,
-  } = {},
-) {
-  const matched = [];
-  const seen = new Set();
+  }: FilterSearchResultsOptions = {},
+): Result[] {
+  const matched: Result[] = [];
+  const seen = new Set<string>();
 
   for (const result of results) {
     if (matched.length >= maxResults) {
@@ -43,7 +58,7 @@ export function filterSearchResultsForBook(
   return matched;
 }
 
-function isSearchResultTitleSimilarToBook(sourceTitle, candidateTitle) {
+function isSearchResultTitleSimilarToBook(sourceTitle: unknown, candidateTitle: unknown): boolean {
   const source = normalizeForMatch(cleanText(String(sourceTitle ?? '').split(TITLE_MATCH_STOP_RE, 1)[0]));
   const candidate = normalizeForMatch(candidateTitle);
   logSearchMatchComparison(`compare title: "${source}" with "${candidate}"`);
@@ -51,7 +66,7 @@ function isSearchResultTitleSimilarToBook(sourceTitle, candidateTitle) {
   return Boolean(source && candidate && candidate.includes(source));
 }
 
-function hasMatchingAuthorLastName(sourceAuthors, candidateAuthors) {
+function hasMatchingAuthorLastName(sourceAuthors: unknown, candidateAuthors: unknown): boolean {
   const sourceLastNames = authorLastNames(sourceAuthors);
   const candidateLastNames = authorLastNames(candidateAuthors);
 
@@ -67,17 +82,17 @@ function hasMatchingAuthorLastName(sourceAuthors, candidateAuthors) {
   ));
 }
 
-function authorLastNames(authors) {
+function authorLastNames(authors: unknown): string[] {
   return cleanValues(authors)
     .flatMap((author) => cleanText(author).replace(AUTHOR_ET_AL_RE, '').split(AUTHOR_SEPARATOR_RE))
     .map((author) => normalizeForMatch(author).split(' ').filter(Boolean).at(-1))
-    .filter(Boolean);
+    .filter((lastName): lastName is string => Boolean(lastName));
 }
 
-function cleanValues(values) {
+function cleanValues(values: unknown): unknown[] {
   return Array.isArray(values) ? values.filter((value) => cleanText(value)) : [];
 }
 
-function logSearchMatchComparison(message) {
+function logSearchMatchComparison(message: string): void {
   appendFileSync(SEARCH_MATCH_LOG_FILE, `${message}\n`, 'utf8');
 }

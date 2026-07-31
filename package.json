@@ -4,11 +4,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "livelib:wishlist": "node livelib-wishlist/scripts/livelib-wish-to-json.mjs",
+    "build": "tsc -p tsconfig.json",
+    "livelib:wishlist": "pnpm run build && node livelib-wishlist/dist/livelib-wish-to-json.mjs",
     "test": "node --test"
   },
   "dependencies": {
     "cheerio": "^1.0.0",
     "playwright": "^1.52.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2"
   }
 }

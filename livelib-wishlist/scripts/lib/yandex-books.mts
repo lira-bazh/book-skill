@@ -1,4 +1,4 @@
-import { load } from 'cheerio';
+import { load, type CheerioAPI } from 'cheerio';
 
 import { extractLabeledPageTextValue } from './audiobook-page-fields.mjs';
 import {
@@ -10,7 +10,55 @@ import {
 } from './text-match.mjs';
 import { buildBookSearchQuery } from './book-search-query.mjs';
 import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
-import { LIVELIB_SOURCE_BOOK } from './livelib.mjs';
+import { LIVELIB_SOURCE_BOOK, type LiveLibBook } from './livelib.mjs';
+
+type BookLike = Record<string | symbol, unknown> & {
+  title?: unknown;
+  authors?: unknown;
+  url?: string;
+  yandex_books_urls?: unknown;
+  audiobooks_urls?: unknown;
+  [LIVELIB_SOURCE_BOOK]?: LiveLibBook;
+};
+
+type YandexBooksSearchResult = {
+  title: string;
+  authors: string[];
+  url: string;
+};
+
+type FilterOptions = {
+  maxResults?: number;
+};
+
+type SearchPage = {
+  url: string;
+  html: string;
+};
+
+type SearchPageFetcher = (options: {
+  query: string;
+  profileDir?: unknown;
+  playwright?: unknown;
+}) => Promise<SearchPage> | SearchPage;
+
+type EnrichBooksWithYandexBooksUrlsOptions = {
+  existingBooks?: readonly BookLike[];
+  fetchSearchPage?: SearchPageFetcher;
+  profileDir?: unknown;
+  playwright?: unknown;
+  maxResults?: number;
+  delayMs?: number;
+  onSearchError?: (details: {
+    book: BookLike;
+    query: string;
+    error: unknown;
+  }) => void;
+  sleep?: (ms: number) => Promise<unknown>;
+};
+
+type CheerioSelection = ReturnType<CheerioAPI>;
+type CheerioArgument = Parameters<CheerioAPI>[0];
 
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
 const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
@@ -19,20 +67,20 @@ const YANDEX_BOOKS_DURATION_LABEL = 'Длительность';
 const YANDEX_BOOKS_DURATION_SECONDS_RE = /(?:"|\\")duration(?:"|\\")\s*:\s*(\d+)/u;
 const YANDEX_BOOKS_TITLE_MATCH_STOP_RE = /[.:?]/u;
 
-export function extractYandexBooksAudiobookNarrator(html) {
+export function extractYandexBooksAudiobookNarrator(html: unknown): string | null {
   return extractLabeledPageTextValue(html, YANDEX_BOOKS_NARRATOR_LABELS, {
     stopLabels: [...YANDEX_BOOKS_NARRATOR_LABELS, YANDEX_BOOKS_DURATION_LABEL],
   });
 }
 
-export function extractYandexBooksAudiobookDurationMinutes(html) {
+export function extractYandexBooksAudiobookDurationMinutes(html: unknown): number | null {
   if (typeof html !== 'string' || !html.trim()) {
     return null;
   }
 
   const durationMatch = html.match(YANDEX_BOOKS_DURATION_SECONDS_RE);
   if (durationMatch) {
-    const seconds = Number.parseInt(durationMatch[1], 10);
+    const seconds = Number.parseInt(durationMatch[1] ?? '', 10);
     if (Number.isFinite(seconds) && seconds > 0) {
       return Math.floor(seconds / 60);
     }
@@ -43,7 +91,7 @@ export function extractYandexBooksAudiobookDurationMinutes(html) {
   );
 }
 
-function parseYandexBooksDurationMinutes(value) {
+function parseYandexBooksDurationMinutes(value: unknown): number | null {
   const text = cleanText(value).toLowerCase();
   if (!text) {
     return null;
@@ -51,14 +99,14 @@ function parseYandexBooksDurationMinutes(value) {
 
   const hoursMatch = text.match(/(\d+)\s*(?:ч\.?|час(?:а|ов)?)/u);
   const minutesMatch = text.match(/(\d+)\s*(?:м\.?|мин\.?|минут(?:а|ы)?)/u);
-  const hours = hoursMatch ? Number.parseInt(hoursMatch[1], 10) : 0;
-  const minutes = minutesMatch ? Number.parseInt(minutesMatch[1], 10) : 0;
+  const hours = hoursMatch ? Number.parseInt(hoursMatch[1] ?? '', 10) : 0;
+  const minutes = minutesMatch ? Number.parseInt(minutesMatch[1] ?? '', 10) : 0;
   const totalMinutes = hours * 60 + minutes;
 
   return totalMinutes > 0 ? totalMinutes : null;
 }
 
-export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {
+export function isSimilarYandexBooksTitle(sourceTitle: unknown, candidateTitle: unknown): boolean {
   const source = normalizeYandexBooksSourceTitleForMatch(sourceTitle);
   const candidate = normalizeForMatch(candidateTitle);
 
@@ -74,13 +122,13 @@ export function isSimilarYandexBooksTitle(sourceTitle, candidateTitle) {
   );
 }
 
-function normalizeYandexBooksSourceTitleForMatch(title) {
+function normalizeYandexBooksSourceTitleForMatch(title: unknown): string {
   return normalizeForMatch(
     cleanText(stripParentheticalText(title).split(YANDEX_BOOKS_TITLE_MATCH_STOP_RE, 1)[0]),
   );
 }
 
-export function isSimilarYandexBooksAuthor(sourceAuthor, candidateAuthor) {
+export function isSimilarYandexBooksAuthor(sourceAuthor: unknown, candidateAuthor: unknown): boolean {
   const source = normalizeForMatch(sourceAuthor);
   const candidate = normalizeForMatch(candidateAuthor);
 
@@ -97,7 +145,7 @@ export function isSimilarYandexBooksAuthor(sourceAuthor, candidateAuthor) {
   );
 }
 
-function isAbbreviatedYandexBooksAuthorMatch(sourceAuthor, candidateAuthor) {
+function isAbbreviatedYandexBooksAuthorMatch(sourceAuthor: string, candidateAuthor: string): boolean {
   return areAuthorNamePartsCompatible(
     splitYandexBooksAuthorName(sourceAuthor),
     splitYandexBooksAuthorName(candidateAuthor),
@@ -107,11 +155,14 @@ function isAbbreviatedYandexBooksAuthorMatch(sourceAuthor, candidateAuthor) {
   );
 }
 
-function splitYandexBooksAuthorName(author) {
+function splitYandexBooksAuthorName(author: string): string[] {
   return normalizeForMatch(author).split(' ').filter(Boolean);
 }
 
-function areAuthorNamePartsCompatible(fullNameParts, abbreviatedNameParts) {
+function areAuthorNamePartsCompatible(
+  fullNameParts: readonly string[],
+  abbreviatedNameParts: readonly string[]
+): boolean {
   if (fullNameParts.length < 2 || abbreviatedNameParts.length < 2) {
     return false;
   }
@@ -128,8 +179,8 @@ function areAuthorNamePartsCompatible(fullNameParts, abbreviatedNameParts) {
     return false;
   }
 
-  const firstAbbreviatedName = abbreviatedGivenNames[0];
-  const firstFullName = fullGivenNames[0];
+  const firstAbbreviatedName = abbreviatedGivenNames[0] ?? '';
+  const firstFullName = fullGivenNames[0] ?? '';
   const firstNameMatches = firstAbbreviatedName.length === 1
     ? firstFullName.startsWith(firstAbbreviatedName)
     : firstAbbreviatedName === firstFullName;
@@ -139,11 +190,14 @@ function areAuthorNamePartsCompatible(fullNameParts, abbreviatedNameParts) {
   ));
 }
 
-export function buildYandexBooksSearchQuery(book) {
-  return buildBookSearchQuery(book);
+export function buildYandexBooksSearchQuery(book: BookLike | null | undefined): string {
+  return buildBookSearchQuery({
+    title: typeof book?.title === 'string' ? book.title : null,
+    authors: Array.isArray(book?.authors) ? book.authors : null,
+  });
 }
 
-export function buildYandexBooksSearchUrl(query) {
+export function buildYandexBooksSearchUrl(query: unknown): string {
   const normalizedQuery = cleanText(query);
   if (!normalizedQuery) {
     throw new Error('Yandex Books search query must not be empty');
@@ -152,10 +206,13 @@ export function buildYandexBooksSearchUrl(query) {
   return `https://books.yandex.ru/search/all/${encodeURIComponent(normalizedQuery)}`;
 }
 
-export function normalizeYandexBooksUrl(rawUrl, baseUrl = 'https://books.yandex.ru/') {
-  let parsed;
+export function normalizeYandexBooksUrl(
+  rawUrl: string | undefined,
+  baseUrl = 'https://books.yandex.ru/'
+): string | null {
+  let parsed: URL;
   try {
-    parsed = new URL(rawUrl, baseUrl);
+    parsed = new URL(rawUrl ?? '', baseUrl);
   } catch {
     return null;
   }
@@ -176,9 +233,12 @@ export function normalizeYandexBooksUrl(rawUrl, baseUrl = 'https://books.yandex.
   return `https://books.yandex.ru${normalizedPath}`;
 }
 
-export function extractYandexBooksUrls(html, baseUrl = 'https://books.yandex.ru/') {
-  const urls = [];
-  const seen = new Set();
+export function extractYandexBooksUrls(
+  html: string,
+  baseUrl = 'https://books.yandex.ru/'
+): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
 
   for (const href of extractHrefValues(html)) {
     const normalizedUrl = normalizeYandexBooksUrl(href, baseUrl);
@@ -191,12 +251,15 @@ export function extractYandexBooksUrls(html, baseUrl = 'https://books.yandex.ru/
   return urls;
 }
 
-export function extractYandexBooksSearchResults(html, baseUrl = 'https://books.yandex.ru/') {
+export function extractYandexBooksSearchResults(
+  html: string,
+  baseUrl = 'https://books.yandex.ru/'
+): YandexBooksSearchResult[] {
   const $ = load(html);
-  const results = [];
-  const seen = new Set();
+  const results: YandexBooksSearchResult[] = [];
+  const seen = new Set<string>();
 
-  const pushResult = ({ title, authors, url }) => {
+  const pushResult = ({ title, authors, url }: YandexBooksSearchResult): void => {
     if (!title || !url || seen.has(url)) {
       return;
     }
@@ -252,7 +315,12 @@ export function extractYandexBooksSearchResults(html, baseUrl = 'https://books.y
   return results;
 }
 
-function extractYandexBooksResultTitle($, link, card, baseUrl) {
+function extractYandexBooksResultTitle(
+  $: CheerioAPI,
+  link: CheerioSelection,
+  card: CheerioSelection,
+  baseUrl: string
+): string {
   const candidates = [
     link.text(),
     link.attr('aria-label'),
@@ -267,7 +335,7 @@ function extractYandexBooksResultTitle($, link, card, baseUrl) {
   return candidates.map((value) => cleanText(value)).find(Boolean) ?? '';
 }
 
-function extractYandexBooksAuthors($, container) {
+function extractYandexBooksAuthors($: CheerioAPI, container: CheerioSelection): string[] {
   const explicitAuthors = container.find('[data-test-id="SNIPPET_AUTHORS"]')
     .toArray()
     .filter((author) => !isHiddenYandexBooksAuthor($, author))
@@ -284,16 +352,20 @@ function extractYandexBooksAuthors($, container) {
   return authors.filter((author, index) => authors.indexOf(author) === index);
 }
 
-function isHiddenYandexBooksAuthor($, author) {
+function isHiddenYandexBooksAuthor($: CheerioAPI, author: CheerioArgument): boolean {
   const classNames = ($(author).attr('class') ?? '').split(/\s+/u);
   return classNames.some((className) => className.startsWith('SnippetAuthorsOneLine_hide__'));
 }
 
-function cleanYandexBooksAuthorName(author) {
+function cleanYandexBooksAuthorName(author: unknown): string {
   return cleanText(author).replace(YANDEX_BOOKS_ET_AL_RE, '').trim();
 }
 
-function findYandexBooksResultCard($, link, baseUrl) {
+function findYandexBooksResultCard(
+  $: CheerioAPI,
+  link: CheerioSelection,
+  baseUrl: string
+): CheerioSelection {
   let card = link.parent();
 
   for (const element of link.parents().toArray()) {
@@ -313,16 +385,23 @@ function findYandexBooksResultCard($, link, baseUrl) {
   return card;
 }
 
-export function isYandexBooksResultSimilarToBook(result, book) {
+export function isYandexBooksResultSimilarToBook(
+  result: YandexBooksSearchResult | null | undefined,
+  book: BookLike | null | undefined
+): boolean {
   return (
     isSimilarYandexBooksTitle(book?.title, result?.title)
     && hasSimilarYandexBooksAuthor(book?.authors, result?.authors)
   );
 }
 
-export function filterYandexBooksResultsForBook(results, book, { maxResults = Infinity } = {}) {
-  const matched = [];
-  const seen = new Set();
+export function filterYandexBooksResultsForBook<Result extends YandexBooksSearchResult>(
+  results: readonly Result[],
+  book: BookLike | null | undefined,
+  { maxResults = Infinity }: FilterOptions = {}
+): Result[] {
+  const matched: Result[] = [];
+  const seen = new Set<string>();
 
   for (const result of results) {
     if (matched.length >= maxResults) {
@@ -342,7 +421,7 @@ export function filterYandexBooksResultsForBook(results, book, { maxResults = In
   return matched;
 }
 
-function hasSimilarYandexBooksAuthor(sourceAuthors, candidateAuthors) {
+function hasSimilarYandexBooksAuthor(sourceAuthors: unknown, candidateAuthors: unknown): boolean {
   const sources = Array.isArray(sourceAuthors) ? sourceAuthors : [];
   const candidates = Array.isArray(candidateAuthors) ? candidateAuthors : [];
 
@@ -354,11 +433,11 @@ function hasSimilarYandexBooksAuthor(sourceAuthors, candidateAuthors) {
 }
 
 export function extractMatchingYandexBooksUrls(
-  html,
-  book,
+  html: string,
+  book: BookLike | null | undefined,
   baseUrl = 'https://books.yandex.ru/',
-  options = {},
-) {
+  options: FilterOptions = {},
+): string[] {
   const results = extractYandexBooksSearchResults(html, baseUrl);
   return filterYandexBooksResultsForBook(
     results,
@@ -368,12 +447,12 @@ export function extractMatchingYandexBooksUrls(
 }
 
 function extractMatchingYandexBooksUrlsForMergedBook(
-  html,
-  book,
-  searchBook,
-  baseUrl,
-  options,
-) {
+  html: string,
+  book: BookLike,
+  searchBook: BookLike,
+  baseUrl: string,
+  options: FilterOptions,
+): string[] {
   const results = extractYandexBooksSearchResults(html, baseUrl);
   const matches = filterYandexBooksResultsForBook(results, searchBook, options);
 
@@ -385,7 +464,10 @@ function extractMatchingYandexBooksUrlsForMergedBook(
     .map((result) => result.url);
 }
 
-function existingYandexBooksUrlsForBook(book, existingBooksByUrl) {
+function existingYandexBooksUrlsForBook(
+  book: BookLike,
+  existingBooksByUrl: ReadonlyMap<string | undefined, BookLike>
+): string[] | null {
   const existingBook = existingBooksByUrl.get(book?.url);
   const { regularUrls } = splitAudiobookUrls(existingBook?.yandex_books_urls);
   if (regularUrls.length === 0) {
@@ -395,8 +477,12 @@ function existingYandexBooksUrlsForBook(book, existingBooksByUrl) {
   return regularUrls;
 }
 
-function isYandexBooksHostUrl(rawUrl) {
-  const url = typeof rawUrl === 'string' ? rawUrl : rawUrl?.url;
+function isYandexBooksHostUrl(rawUrl: unknown): boolean {
+  const url = typeof rawUrl === 'string'
+    ? rawUrl
+    : typeof rawUrl === 'object' && rawUrl !== null && 'url' in rawUrl
+      ? rawUrl.url
+      : null;
   if (typeof url !== 'string') {
     return false;
   }
@@ -408,14 +494,17 @@ function isYandexBooksHostUrl(rawUrl) {
   }
 }
 
-function hasYandexBooksAudiobookUrl(book) {
+function hasYandexBooksAudiobookUrl(book: BookLike | null | undefined): boolean {
   return [
     ...splitAudiobookUrls(book?.yandex_books_urls).audiobookUrls,
     ...(Array.isArray(book?.audiobooks_urls) ? book.audiobooks_urls : []),
   ].some(isYandexBooksHostUrl);
 }
 
-export function countBooksWithExistingYandexBooksUrls(books, existingBooks = []) {
+export function countBooksWithExistingYandexBooksUrls(
+  books: readonly BookLike[],
+  existingBooks: readonly BookLike[] = []
+): number {
   const existingBooksByUrl = new Map(
     existingBooks
       .filter((book) => book?.url)
@@ -429,7 +518,7 @@ export function countBooksWithExistingYandexBooksUrls(books, existingBooks = [])
 }
 
 export async function enrichBooksWithYandexBooksUrls(
-  books,
+  books: readonly BookLike[],
   {
     existingBooks = [],
     fetchSearchPage,
@@ -441,16 +530,16 @@ export async function enrichBooksWithYandexBooksUrls(
     sleep = (ms) => new Promise((resolve) => {
       setTimeout(resolve, ms);
     }),
-  } = {},
-) {
-  const enrichedBooks = [];
+  }: EnrichBooksWithYandexBooksUrlsOptions = {},
+): Promise<BookLike[]> {
+  const enrichedBooks: BookLike[] = [];
   const existingBooksByUrl = new Map(
     existingBooks
       .filter((book) => book?.url)
       .map((book) => [book.url, book]),
   );
   const searchPageFetcher = fetchSearchPage
-    ?? (await import('./browser.mjs')).fetchYandexBooksSearchPageWithBrowser;
+    ?? (await import('./browser.mjs')).fetchYandexBooksSearchPageWithBrowser as SearchPageFetcher;
   let searchedBooks = 0;
 
   for (const book of books) {
@@ -459,7 +548,7 @@ export async function enrichBooksWithYandexBooksUrls(
     const existingYandexAudiobookUrls = splitAudiobookUrls(book.yandex_books_urls).audiobookUrls;
     if (existingYandexBooksUrls || hasYandexBooksAudiobookUrl(book)) {
       const mergedAudiobookUrls = mergeAudiobookUrls(book, existingYandexAudiobookUrls);
-      const enrichedBook = {
+      const enrichedBook: BookLike = {
         ...book,
         yandex_books_urls: existingYandexBooksUrls ? [...existingYandexBooksUrls] : [],
       };
@@ -480,7 +569,7 @@ export async function enrichBooksWithYandexBooksUrls(
     }
 
     const query = buildYandexBooksSearchQuery(searchBook);
-    let searchPage;
+    let searchPage: SearchPage;
     try {
       searchPage = await searchPageFetcher({
         query,
@@ -490,7 +579,7 @@ export async function enrichBooksWithYandexBooksUrls(
     } catch (error) {
       onSearchError({ book, query, error });
       const mergedAudiobookUrls = mergeAudiobookUrls(book, existingYandexAudiobookUrls);
-      const enrichedBook = {
+      const enrichedBook: BookLike = {
         ...book,
         yandex_books_urls: [],
       };
@@ -519,7 +608,7 @@ export async function enrichBooksWithYandexBooksUrls(
       ...existingYandexAudiobookUrls,
       ...audiobookUrls,
     ]);
-    const enrichedBook = {
+    const enrichedBook: BookLike = {
       ...book,
       yandex_books_urls: regularUrls,
     };

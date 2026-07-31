@@ -1,4 +1,4 @@
-import { load } from 'cheerio';
+import { load, type CheerioAPI } from 'cheerio';
 
 import { extractLabeledPageTextValue } from './audiobook-page-fields.mjs';
 import {
@@ -13,6 +13,66 @@ import {
   isSearchResultSimilarToBook,
 } from './book-search-match.mjs';
 import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
+
+type BookLike = Record<string, unknown> & {
+  title?: unknown;
+  authors?: unknown;
+  url?: string;
+  litres_urls?: unknown;
+  audiobooks_urls?: unknown;
+};
+
+type LitresSearchResult = {
+  title: string;
+  authors: string[];
+  url: string;
+};
+
+type FilterOptions = {
+  maxResults?: number;
+};
+
+type SearchPage = string | {
+  url?: string | null;
+  html?: string | null;
+};
+
+type SearchPageFetcher = (options: {
+  searchUrl: string;
+  query: string;
+  book: BookLike;
+  profileDir?: unknown;
+  playwright?: unknown;
+}) => Promise<SearchPage> | SearchPage;
+
+type EnrichBooksWithLitresUrlsOptions = {
+  existingBooks?: readonly BookLike[];
+  fetchSearchPage?: SearchPageFetcher;
+  profileDir?: unknown;
+  playwright?: unknown;
+  maxResults?: number;
+  delayMs?: number;
+  onSearchError?: (details: {
+    book: BookLike;
+    query: string;
+    searchUrl: string;
+    error: unknown;
+  }) => void;
+  sleep?: (ms: number) => Promise<unknown>;
+};
+
+type LitresAudiobookJsonLd = {
+  '@type'?: unknown;
+  duration?: unknown;
+  readBy?: unknown;
+};
+
+type JsonLdPerson = {
+  name?: unknown;
+};
+
+type CheerioSelection = ReturnType<CheerioAPI>;
+type CheerioArgument = Parameters<CheerioAPI>[0];
 
 const LITRES_ITEM_PATH_RE = /^\/(?:book|audiobook)\/[^/]+(?:\/[^/]+)*$/;
 const LITRES_AD_URL_PARAM_NAMES = new Set([
@@ -32,13 +92,13 @@ const LITRES_READER_DETAILS_TEST_ID = 'art__reader--details';
 const LITRES_PERSON_NAME_LINK_TEST_ID = 'art__personName--link';
 const JSON_LD_SCRIPT_RE = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/giu;
 
-export function extractLitresAudiobookNarrator(html) {
+export function extractLitresAudiobookNarrator(html: unknown): string | null {
   return extractLitresAudiobookNarratorFromJsonLd(html)
     ?? extractLitresAudiobookNarratorFromReaderDetails(html)
     ?? extractLabeledPageTextValue(html, [LITRES_NARRATOR_LABEL]);
 }
 
-export function extractLitresAudiobookDurationMinutes(html) {
+export function extractLitresAudiobookDurationMinutes(html: unknown): number | null {
   const duration = extractLitresAudiobookJsonLd(html)?.duration;
   if (typeof duration !== 'string') {
     return null;
@@ -57,31 +117,31 @@ export function extractLitresAudiobookDurationMinutes(html) {
   return totalMinutes > 0 ? totalMinutes : null;
 }
 
-function extractLitresAudiobookNarratorFromJsonLd(html) {
+function extractLitresAudiobookNarratorFromJsonLd(html: unknown): string | null {
   const readBy = extractLitresAudiobookJsonLd(html)?.readBy;
   const readers = Array.isArray(readBy) ? readBy : [readBy];
   const names = readers
-    .map((reader) => cleanText(reader?.name))
+    .map((reader) => cleanText(asJsonLdPerson(reader)?.name))
     .filter(Boolean)
     .filter((name, index, values) => values.indexOf(name) === index);
 
   return names.length > 0 ? names.join(', ') : null;
 }
 
-function extractLitresAudiobookJsonLd(html) {
+function extractLitresAudiobookJsonLd(html: unknown): LitresAudiobookJsonLd | null {
   if (typeof html !== 'string' || !html.trim()) {
     return null;
   }
 
   for (const match of html.matchAll(JSON_LD_SCRIPT_RE)) {
-    let data;
+    let data: unknown;
     try {
-      data = JSON.parse(match[1]);
+      data = JSON.parse(match[1] ?? '');
     } catch {
       continue;
     }
 
-    if (data?.['@type'] === 'Audiobook') {
+    if (isJsonObject(data) && data['@type'] === 'Audiobook') {
       return data;
     }
   }
@@ -89,7 +149,7 @@ function extractLitresAudiobookJsonLd(html) {
   return null;
 }
 
-function extractLitresAudiobookNarratorFromReaderDetails(html) {
+function extractLitresAudiobookNarratorFromReaderDetails(html: unknown): string | null {
   if (typeof html !== 'string' || !html.trim()) {
     return null;
   }
@@ -105,11 +165,11 @@ function extractLitresAudiobookNarratorFromReaderDetails(html) {
   return narratorNames.length > 0 ? narratorNames.join(', ') : null;
 }
 
-function normalizeLitresTitleForMatch(title) {
+function normalizeLitresTitleForMatch(title: unknown): string {
   return normalizeForMatch(cleanText(title).replace(TITLE_FORMAT_NOTE_RE, ' '));
 }
 
-export function isSimilarLitresTitle(sourceTitle, candidateTitle) {
+export function isSimilarLitresTitle(sourceTitle: unknown, candidateTitle: unknown): boolean {
   const source = normalizeLitresTitleForMatch(sourceTitle);
   const candidate = normalizeLitresTitleForMatch(candidateTitle);
 
@@ -125,7 +185,7 @@ export function isSimilarLitresTitle(sourceTitle, candidateTitle) {
   );
 }
 
-export function isSimilarLitresAuthor(sourceAuthor, candidateAuthor) {
+export function isSimilarLitresAuthor(sourceAuthor: unknown, candidateAuthor: unknown): boolean {
   const sourceVariants = normalizeLitresAuthorVariants(sourceAuthor);
   const candidateVariants = normalizeLitresAuthorVariants(candidateAuthor);
 
@@ -139,7 +199,7 @@ export function isSimilarLitresAuthor(sourceAuthor, candidateAuthor) {
   ));
 }
 
-function normalizeLitresAuthorVariants(author) {
+function normalizeLitresAuthorVariants(author: unknown): string[] {
   const cleanedAuthor = cleanText(author).replace(AUTHOR_ET_AL_RE, '');
   const variants = [cleanedAuthor, ...cleanedAuthor.split(AUTHOR_SEPARATOR_RE)];
 
@@ -149,11 +209,14 @@ function normalizeLitresAuthorVariants(author) {
     .filter((variant, index, values) => values.indexOf(variant) === index);
 }
 
-export function buildLitresSearchQuery(book) {
-  return buildBookSearchQuery(book);
+export function buildLitresSearchQuery(book: BookLike | null | undefined): string {
+  return buildBookSearchQuery({
+    title: typeof book?.title === 'string' ? book.title : null,
+    authors: Array.isArray(book?.authors) ? book.authors : null,
+  });
 }
 
-export function buildLitresSearchUrl(query) {
+export function buildLitresSearchUrl(query: unknown): string {
   const normalizedQuery = cleanText(query);
   if (!normalizedQuery) {
     throw new Error('Litres search query must not be empty');
@@ -164,10 +227,13 @@ export function buildLitresSearchUrl(query) {
   return url.toString();
 }
 
-export function normalizeLitresUrl(rawUrl, baseUrl = 'https://www.litres.ru/') {
-  let parsed;
+export function normalizeLitresUrl(
+  rawUrl: string | undefined,
+  baseUrl = 'https://www.litres.ru/'
+): string | null {
+  let parsed: URL;
   try {
-    parsed = new URL(rawUrl, baseUrl);
+    parsed = new URL(rawUrl ?? '', baseUrl);
   } catch {
     return null;
   }
@@ -189,9 +255,12 @@ export function normalizeLitresUrl(rawUrl, baseUrl = 'https://www.litres.ru/') {
   return `https://www.litres.ru${normalizedPath}`;
 }
 
-export function extractLitresUrls(html, baseUrl = 'https://www.litres.ru/') {
-  const urls = [];
-  const seen = new Set();
+export function extractLitresUrls(
+  html: string,
+  baseUrl = 'https://www.litres.ru/'
+): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
 
   for (const href of extractHrefValues(html)) {
     const normalizedUrl = normalizeLitresUrl(href, baseUrl);
@@ -204,14 +273,14 @@ export function extractLitresUrls(html, baseUrl = 'https://www.litres.ru/') {
   return urls;
 }
 
-function uniqueTexts(values) {
+function uniqueTexts(values: readonly unknown[]): string[] {
   return values
     .map((value) => cleanText(value))
     .filter(Boolean)
     .filter((value, index, allValues) => allValues.indexOf(value) === index);
 }
 
-function isUsefulTitleText(value) {
+function isUsefulTitleText(value: unknown): boolean {
   const text = cleanText(value);
   return text.length > 1
     && text.length <= 220
@@ -219,8 +288,10 @@ function isUsefulTitleText(value) {
     && !NON_TITLE_TEXT_RE.test(text);
 }
 
-function getElementSearchText(element) {
-  const attribs = element?.attribs ?? {};
+function getElementSearchText(element: unknown): string {
+  const attribs = isJsonObject(element) && isJsonObject(element.attribs)
+    ? element.attribs
+    : {};
   return [
     attribs.class,
     attribs['data-testid'],
@@ -230,10 +301,10 @@ function getElementSearchText(element) {
   ].filter(Boolean).join(' ').toLocaleLowerCase('ru-RU');
 }
 
-function isLitresAdUrl(rawUrl, baseUrl) {
-  let parsed;
+function isLitresAdUrl(rawUrl: string | undefined, baseUrl: string): boolean {
+  let parsed: URL;
   try {
-    parsed = new URL(rawUrl, baseUrl);
+    parsed = new URL(rawUrl ?? '', baseUrl);
   } catch {
     return false;
   }
@@ -252,7 +323,7 @@ function isLitresAdUrl(rawUrl, baseUrl) {
   return false;
 }
 
-function isLitresAdScope($, scope) {
+function isLitresAdScope($: CheerioAPI, scope: CheerioSelection): boolean {
   return scope
     .parents()
     .addBack()
@@ -261,8 +332,14 @@ function isLitresAdScope($, scope) {
     || LITRES_AD_TEXT_RE.test(cleanText(scope.text()));
 }
 
-function collectTitleCandidates($, link, scope, url, baseUrl) {
-  const candidates = [];
+function collectTitleCandidates(
+  $: CheerioAPI,
+  link: CheerioSelection,
+  scope: CheerioSelection,
+  url: string,
+  baseUrl: string
+): string[] {
+  const candidates: unknown[] = [];
 
   for (const attrName of ['title', 'aria-label']) {
     candidates.push(link.attr(attrName));
@@ -288,9 +365,12 @@ function collectTitleCandidates($, link, scope, url, baseUrl) {
   return uniqueTexts(candidates).filter(isUsefulTitleText);
 }
 
-export function extractLitresSearchResults(html, baseUrl = 'https://www.litres.ru/') {
+export function extractLitresSearchResults(
+  html: string,
+  baseUrl = 'https://www.litres.ru/'
+): LitresSearchResult[] {
   const $ = load(html);
-  const results = [];
+  const results: LitresSearchResult[] = [];
 
   $('[data-testid="art__wrapper"]').each((_, element) => {
     const scope = $(element);
@@ -329,7 +409,7 @@ export function extractLitresSearchResults(html, baseUrl = 'https://www.litres.r
     }
 
     results.push({
-      title: titleCandidates[0],
+      title: titleCandidates[0] ?? '',
       authors,
       url,
     });
@@ -338,20 +418,27 @@ export function extractLitresSearchResults(html, baseUrl = 'https://www.litres.r
   return results;
 }
 
-export function isLitresResultSimilarToBook(result, book) {
+export function isLitresResultSimilarToBook(
+  result: LitresSearchResult | null | undefined,
+  book: BookLike | null | undefined
+): boolean {
   return isSearchResultSimilarToBook(result, book);
 }
 
-export function filterLitresResultsForBook(results, book, { maxResults = Infinity } = {}) {
+export function filterLitresResultsForBook<Result extends LitresSearchResult>(
+  results: readonly Result[],
+  book: BookLike | null | undefined,
+  { maxResults = Infinity }: FilterOptions = {}
+): Result[] {
   return filterSearchResultsForBook(results, book, { maxResults });
 }
 
 export function extractMatchingLitresUrls(
-  html,
-  book,
+  html: string,
+  book: BookLike | null | undefined,
   baseUrl = 'https://www.litres.ru/',
-  options = {},
-) {
+  options: FilterOptions = {},
+): string[] {
   return filterLitresResultsForBook(
     extractLitresSearchResults(html, baseUrl),
     book,
@@ -359,7 +446,10 @@ export function extractMatchingLitresUrls(
   ).map((result) => result.url);
 }
 
-function existingLitresUrlsForBook(book, existingBooksByUrl) {
+function existingLitresUrlsForBook(
+  book: BookLike,
+  existingBooksByUrl: ReadonlyMap<string | undefined, BookLike>
+): string[] | null {
   const existingBook = existingBooksByUrl.get(book?.url);
   const { regularUrls } = splitAudiobookUrls(existingBook?.litres_urls);
   if (regularUrls.length === 0) {
@@ -369,8 +459,12 @@ function existingLitresUrlsForBook(book, existingBooksByUrl) {
   return regularUrls;
 }
 
-function isLitresHostUrl(rawUrl) {
-  const url = typeof rawUrl === 'string' ? rawUrl : rawUrl?.url;
+function isLitresHostUrl(rawUrl: unknown): boolean {
+  const url = typeof rawUrl === 'string'
+    ? rawUrl
+    : isJsonObject(rawUrl)
+      ? rawUrl.url
+      : null;
   if (typeof url !== 'string') {
     return false;
   }
@@ -384,14 +478,17 @@ function isLitresHostUrl(rawUrl) {
   }
 }
 
-function hasLitresAudiobookUrl(book) {
+function hasLitresAudiobookUrl(book: BookLike | null | undefined): boolean {
   return [
     ...splitAudiobookUrls(book?.litres_urls).audiobookUrls,
     ...(Array.isArray(book?.audiobooks_urls) ? book.audiobooks_urls : []),
   ].some(isLitresHostUrl);
 }
 
-export function countBooksWithExistingLitresUrls(books, existingBooks = []) {
+export function countBooksWithExistingLitresUrls(
+  books: readonly BookLike[],
+  existingBooks: readonly BookLike[] = []
+): number {
   const existingBooksByUrl = new Map(
     existingBooks
       .filter((book) => book?.url)
@@ -405,7 +502,7 @@ export function countBooksWithExistingLitresUrls(books, existingBooks = []) {
 }
 
 export async function enrichBooksWithLitresUrls(
-  books,
+  books: readonly BookLike[],
   {
     existingBooks = [],
     fetchSearchPage,
@@ -417,9 +514,9 @@ export async function enrichBooksWithLitresUrls(
     sleep = (ms) => new Promise((resolve) => {
       setTimeout(resolve, ms);
     }),
-  } = {},
-) {
-  const enrichedBooks = [];
+  }: EnrichBooksWithLitresUrlsOptions = {},
+): Promise<BookLike[]> {
+  const enrichedBooks: BookLike[] = [];
   const existingBooksByUrl = new Map(
     existingBooks
       .filter((book) => book?.url)
@@ -453,7 +550,7 @@ export async function enrichBooksWithLitresUrls(
     }
 
     const searchUrl = buildLitresSearchUrl(query);
-    let litresUrls = [];
+    let litresUrls: string[] = [];
 
     try {
       const searchPage = await fetchSearchPage({
@@ -487,4 +584,12 @@ export async function enrichBooksWithLitresUrls(
   }
 
   return enrichedBooks;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function asJsonLdPerson(value: unknown): JsonLdPerson | null {
+  return isJsonObject(value) ? value : null;
 }

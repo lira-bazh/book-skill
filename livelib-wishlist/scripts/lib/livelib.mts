@@ -1,7 +1,41 @@
-import { load } from "cheerio";
+import { load, type CheerioAPI } from "cheerio";
 
 import { normalizeBookAudiobookUrls } from "./book-url-fields.mjs";
 import { cleanText, extractHrefValues } from "./text-match.mjs";
+
+export type LiveLibBook = {
+  title: string;
+  authors: string[];
+  url: string;
+};
+
+type ExistingBook = Record<string | symbol, unknown> & {
+  url?: string;
+  authors?: unknown;
+};
+
+type WishlistPage = {
+  url: string;
+  html: string;
+};
+
+type ParsedWishlistUrl = {
+  username: string;
+  url: string;
+};
+
+type BookMatch = {
+  livelibBook: LiveLibBook;
+  existingBook: ExistingBook | null;
+};
+
+type BooksByLiveLibUrlMatch = {
+  matched: BookMatch[];
+  newBooks: LiveLibBook[];
+  removedBooks: ExistingBook[];
+};
+
+type CheerioSelection = ReturnType<CheerioAPI>;
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
 const USER_WISHLIST_PATH_RE = /^\/users\/[0-9]+\/books\/want\/?$/;
@@ -13,13 +47,13 @@ const WISHLIST_PAGINATOR_SELECTOR =
 const WISHLIST_BOOK_AUTHOR_SELECTOR = '[class*="BookCard_BookCardAuthor"]';
 
 export class LiveLibAccessError extends Error {}
-export const LIVELIB_SOURCE_BOOK = Symbol("livelibSourceBook");
+export const LIVELIB_SOURCE_BOOK: unique symbol = Symbol("livelibSourceBook");
 
-function escapeRegExp(value) {
+function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function parseLivelibWishlistUrl(rawUrl) {
+export function parseLivelibWishlistUrl(rawUrl: string): ParsedWishlistUrl {
   const parsed = new URL(rawUrl);
 
   if (!["http:", "https:"].includes(parsed.protocol)) {
@@ -33,14 +67,14 @@ export function parseLivelibWishlistUrl(rawUrl) {
   const readerMatch = parsed.pathname.match(WISHLIST_PATH_RE);
   if (readerMatch) {
     return {
-      username: readerMatch[1],
+      username: readerMatch[1] ?? "",
       url: `https://www.livelib.ru${parsed.pathname.replace(/\/$/, "")}`
     };
   }
 
   const normalizedPath = parsed.pathname.replace(/\/$/, "");
   if (USER_WISHLIST_PATH_RE.test(normalizedPath) && parsed.search === "") {
-    const userId = normalizedPath.split("/")[2];
+    const userId = normalizedPath.split("/")[2] ?? "";
     return {
       username: userId,
       url: `https://www.livelib.ru${normalizedPath}`
@@ -52,8 +86,12 @@ export function parseLivelibWishlistUrl(rawUrl) {
   );
 }
 
-export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
-  let parsed;
+export function normalizeWishlistPageUrl(
+  rawUrl: string,
+  username: string,
+  baseUrl: string
+): string | null {
+  let parsed: URL;
   try {
     parsed = new URL(rawUrl, baseUrl);
   } catch {
@@ -80,7 +118,7 @@ export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
   );
 
   if (listViewMatch) {
-    const pageValue = listViewMatch[1];
+    const pageValue = listViewMatch[1] ?? "";
     const pageNumber = Number.parseInt(pageValue, 10);
 
     if (String(pageNumber) !== pageValue || pageNumber < 2 || parsed.search) {
@@ -104,15 +142,19 @@ export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
     return null;
   }
 
-  const pageNumber = Number.parseInt(pageValues[0], 10);
-  if (String(pageNumber) !== pageValues[0] || pageNumber < 2) {
+  const pageValue = pageValues[0] ?? "";
+  const pageNumber = Number.parseInt(pageValue, 10);
+  if (String(pageNumber) !== pageValue || pageNumber < 2) {
     return null;
   }
 
   return `https://www.livelib.ru${expectedPath}?page=${pageNumber}`;
 }
 
-export function getWishlistPaginationPageNumber(rawUrl, username) {
+export function getWishlistPaginationPageNumber(
+  rawUrl: string,
+  username: string
+): number | null {
   const parsed = new URL(rawUrl);
   const userWishlistPageNumber = getUserWishlistPageNumber(parsed);
   if (userWishlistPageNumber) {
@@ -126,17 +168,17 @@ export function getWishlistPaginationPageNumber(rawUrl, username) {
   );
 
   if (listViewMatch) {
-    return Number.parseInt(listViewMatch[1], 10);
+    return Number.parseInt(listViewMatch[1] ?? "", 10);
   }
 
   if (normalizedPath === expectedPath) {
-    return Number.parseInt(parsed.searchParams.get("page"), 10);
+    return Number.parseInt(parsed.searchParams.get("page") ?? "", 10);
   }
 
   return null;
 }
 
-function normalizeUserWishlistPageUrl(parsed) {
+function normalizeUserWishlistPageUrl(parsed: URL): string | null {
   const normalizedPath = parsed.pathname.replace(/\/$/, "");
   if (
     parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
@@ -158,15 +200,16 @@ function normalizeUserWishlistPageUrl(parsed) {
     return null;
   }
 
-  const pageNumber = Number.parseInt(pageValues[0], 10);
-  if (String(pageNumber) !== pageValues[0] || pageNumber < 2) {
+  const pageValue = pageValues[0] ?? "";
+  const pageNumber = Number.parseInt(pageValue, 10);
+  if (String(pageNumber) !== pageValue || pageNumber < 2) {
     return null;
   }
 
   return `https://www.livelib.ru${normalizedPath}?page=${pageNumber}`;
 }
 
-function getUserWishlistPageNumber(parsed) {
+function getUserWishlistPageNumber(parsed: URL): number | null {
   const normalizedPath = parsed.pathname.replace(/\/$/, "");
   if (
     parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
@@ -179,20 +222,25 @@ function getUserWishlistPageNumber(parsed) {
     return 1;
   }
 
-  const pageNumber = Number.parseInt(parsed.searchParams.get("page"), 10);
-  return String(pageNumber) === parsed.searchParams.get("page")
+  const value = parsed.searchParams.get("page");
+  const pageNumber = Number.parseInt(value ?? "", 10);
+  return String(pageNumber) === value
     ? pageNumber
     : null;
 }
 
-export function extractWishlistPageUrls(html, username, baseUrl) {
+export function extractWishlistPageUrls(
+  html: string,
+  username: string,
+  baseUrl: string
+): string[] {
   const domPageUrls = extractWishlistPageUrlsFromDom(html, baseUrl);
   if (domPageUrls) {
     return uniqueWishlistPageUrls(domPageUrls, username);
   }
 
-  const urls = [];
-  const seenPageNumbers = new Set();
+  const urls: string[] = [];
+  const seenPageNumbers = new Set<number | null>();
 
   for (const href of extractHrefValues(html)) {
     const normalizedUrl = normalizeWishlistPageUrl(href, username, baseUrl);
@@ -210,9 +258,9 @@ export function extractWishlistPageUrls(html, username, baseUrl) {
   return urls;
 }
 
-function uniqueWishlistPageUrls(pageUrls, username) {
-  const urls = [];
-  const seenPageNumbers = new Set();
+function uniqueWishlistPageUrls(pageUrls: readonly string[], username: string): string[] {
+  const urls: string[] = [];
+  const seenPageNumbers = new Set<number | null>();
 
   for (const pageUrl of pageUrls) {
     const pageNumber = getWishlistPaginationPageNumber(pageUrl, username);
@@ -225,7 +273,7 @@ function uniqueWishlistPageUrls(pageUrls, username) {
   return urls;
 }
 
-function extractWishlistPageUrlsFromDom(html, baseUrl) {
+function extractWishlistPageUrlsFromDom(html: string, baseUrl: string): string[] | null {
   const $ = load(html);
   const paginator = $(WISHLIST_PAGINATOR_SELECTOR).first();
   if (paginator.length === 0) {
@@ -241,7 +289,7 @@ function extractWishlistPageUrlsFromDom(html, baseUrl) {
   }
 
   const currentPage = getWishlistDomCurrentPageNumber(baseUrl) ?? 1;
-  const urls = [];
+  const urls: string[] = [];
   for (
     let pageNumber = currentPage + 1;
     pageNumber <= pageCount;
@@ -253,8 +301,8 @@ function extractWishlistPageUrlsFromDom(html, baseUrl) {
   return urls;
 }
 
-function extractWishlistDomPageCount($, paginator) {
-  const pageNumbers = [];
+function extractWishlistDomPageCount($: CheerioAPI, paginator: CheerioSelection): number {
+  const pageNumbers: number[] = [];
   const textNumberRe = /^\d+$/u;
 
   paginator
@@ -269,7 +317,7 @@ function extractWishlistDomPageCount($, paginator) {
         $(element).attr("href"),
         "page"
       );
-      if (Number.isInteger(hrefPageNumber)) {
+      if (hrefPageNumber !== null && Number.isInteger(hrefPageNumber)) {
         pageNumbers.push(hrefPageNumber);
       }
     });
@@ -277,8 +325,8 @@ function extractWishlistDomPageCount($, paginator) {
   return pageNumbers.length > 0 ? Math.max(...pageNumbers) : 1;
 }
 
-function normalizeUserWishlistBaseUrl(rawUrl) {
-  let parsed;
+function normalizeUserWishlistBaseUrl(rawUrl: string): string | null {
+  let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
@@ -296,12 +344,16 @@ function normalizeUserWishlistBaseUrl(rawUrl) {
   return `https://www.livelib.ru${normalizedPath}`;
 }
 
-function extractUserWishlistBaseUrlFromPaginator($, paginator, baseUrl) {
+function extractUserWishlistBaseUrlFromPaginator(
+  $: CheerioAPI,
+  paginator: CheerioSelection,
+  baseUrl: string
+): string | null {
   for (const element of paginator.find("a[href]").toArray()) {
-    let normalizedUrl;
+    let normalizedUrl: string | null;
     try {
       normalizedUrl = normalizeUserWishlistBaseUrl(
-        new URL($(element).attr("href"), baseUrl).toString()
+        new URL($(element).attr("href") ?? "", baseUrl).toString()
       );
     } catch {
       normalizedUrl = null;
@@ -314,8 +366,8 @@ function extractUserWishlistBaseUrlFromPaginator($, paginator, baseUrl) {
   return null;
 }
 
-function getWishlistDomCurrentPageNumber(rawUrl) {
-  let parsed;
+function getWishlistDomCurrentPageNumber(rawUrl: string): number | null {
+  let parsed: URL;
   try {
     parsed = new URL(rawUrl);
   } catch {
@@ -334,14 +386,19 @@ function getWishlistDomCurrentPageNumber(rawUrl) {
     return 1;
   }
 
-  const pageNumber = Number.parseInt(parsed.searchParams.get("page"), 10);
-  return String(pageNumber) === parsed.searchParams.get("page")
+  const value = parsed.searchParams.get("page");
+  const pageNumber = Number.parseInt(value ?? "", 10);
+  return String(pageNumber) === value
     ? pageNumber
     : null;
 }
 
-export function isWishlistContentUrl(rawUrl, username, baseUrl) {
-  let parsed;
+export function isWishlistContentUrl(
+  rawUrl: string,
+  username: string,
+  baseUrl: string
+): boolean {
+  let parsed: URL;
   try {
     parsed = new URL(rawUrl, baseUrl);
   } catch {
@@ -369,10 +426,10 @@ export function isWishlistContentUrl(rawUrl, username, baseUrl) {
   return normalizeWishlistPageUrl(rawUrl, username, baseUrl) !== null;
 }
 
-export function normalizeBookUrl(rawUrl, baseUrl) {
-  let parsed;
+export function normalizeBookUrl(rawUrl: string | undefined, baseUrl: string): string | null {
+  let parsed: URL;
   try {
-    parsed = new URL(rawUrl, baseUrl);
+    parsed = new URL(rawUrl ?? "", baseUrl);
   } catch {
     return null;
   }
@@ -393,9 +450,9 @@ export function normalizeBookUrl(rawUrl, baseUrl) {
   return `https://www.livelib.ru${normalizedPath}`;
 }
 
-export function extractBookUrls(html, baseUrl) {
-  const urls = [];
-  const seen = new Set();
+export function extractBookUrls(html: string, baseUrl: string): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
 
   for (const href of extractHrefValues(html)) {
     const normalizedUrl = normalizeBookUrl(href, baseUrl);
@@ -408,15 +465,15 @@ export function extractBookUrls(html, baseUrl) {
   return urls;
 }
 
-export function extractBooks(html, baseUrl) {
+export function extractBooks(html: string, baseUrl: string): LiveLibBook[] {
   const domBooks = extractBooksFromWishlistDom(html, baseUrl);
 
   return mergeWishlistBookSources(domBooks ?? []);
 }
 
-function mergeWishlistBookSources(...sources) {
-  const books = [];
-  const booksByUrl = new Map();
+function mergeWishlistBookSources(...sources: readonly LiveLibBook[][]): LiveLibBook[] {
+  const books: LiveLibBook[] = [];
+  const booksByUrl = new Map<string, LiveLibBook>();
 
   for (const source of sources) {
     for (const book of source) {
@@ -445,15 +502,15 @@ function mergeWishlistBookSources(...sources) {
   return books;
 }
 
-function extractBooksFromWishlistDom(html, baseUrl) {
+function extractBooksFromWishlistDom(html: string, baseUrl: string): LiveLibBook[] | null {
   const $ = load(html);
   const list = $(WISHLIST_LIST_SELECTOR).first();
   if (list.length === 0) {
     return null;
   }
 
-  const books = [];
-  const seen = new Set();
+  const books: LiveLibBook[] = [];
+  const seen = new Set<string>();
   const links = list
     .find("a[href]")
     .toArray()
@@ -480,7 +537,7 @@ function extractBooksFromWishlistDom(html, baseUrl) {
   return books;
 }
 
-function extractWishlistDomBookAuthors($, bookLink) {
+function extractWishlistDomBookAuthors($: CheerioAPI, bookLink: CheerioSelection): string[] {
   return bookLink
     .parent()
     .find(WISHLIST_BOOK_AUTHOR_SELECTOR)
@@ -491,7 +548,7 @@ function extractWishlistDomBookAuthors($, bookLink) {
     .filter((author, index, authors) => authors.indexOf(author) === index);
 }
 
-function uniqueBookAuthors(authors) {
+function uniqueBookAuthors(authors: unknown): string[] {
   return Array.isArray(authors)
     ? authors
         .map((author) => cleanText(author))
@@ -500,12 +557,12 @@ function uniqueBookAuthors(authors) {
     : [];
 }
 
-function getNumericSearchParam(rawUrl, name) {
+function getNumericSearchParam(rawUrl: string | undefined, name: string): number | null {
   if (typeof rawUrl !== "string") {
     return null;
   }
 
-  let parsed;
+  let parsed: URL;
   try {
     parsed = new URL(rawUrl, "https://www.livelib.ru");
   } catch {
@@ -513,14 +570,14 @@ function getNumericSearchParam(rawUrl, name) {
   }
 
   const value = parsed.searchParams.get(name);
-  const number = Number.parseInt(value, 10);
+  const number = Number.parseInt(value ?? "", 10);
 
   return String(number) === value ? number : null;
 }
 
-export function extractBooksFromPages(pages) {
-  const books = [];
-  const seen = new Set();
+export function extractBooksFromPages(pages: readonly WishlistPage[]): LiveLibBook[] {
+  const books: LiveLibBook[] = [];
+  const seen = new Set<string>();
 
   for (const page of pages) {
     for (const book of extractBooks(page.html, page.url)) {
@@ -534,9 +591,9 @@ export function extractBooksFromPages(pages) {
   return books;
 }
 
-export function extractBookUrlsFromPages(pages) {
-  const urls = [];
-  const seen = new Set();
+export function extractBookUrlsFromPages(pages: readonly WishlistPage[]): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
 
   for (const page of pages) {
     for (const bookUrl of extractBookUrls(page.html, page.url)) {
@@ -550,13 +607,16 @@ export function extractBookUrlsFromPages(pages) {
   return urls;
 }
 
-export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
+export function matchBooksByLiveLibUrl(
+  livelibBooks: readonly LiveLibBook[],
+  existingBooks: readonly ExistingBook[] = []
+): BooksByLiveLibUrlMatch {
   const existingBooksByUrl = new Map(
     existingBooks.filter((book) => book?.url).map((book) => [book.url, book])
   );
-  const livelibUrls = new Set();
-  const matched = [];
-  const newBooks = [];
+  const livelibUrls = new Set<string>();
+  const matched: BookMatch[] = [];
+  const newBooks: LiveLibBook[] = [];
 
   for (const livelibBook of livelibBooks) {
     livelibUrls.add(livelibBook.url);
@@ -583,12 +643,15 @@ export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
   };
 }
 
-export function mergeExistingLiveLibBooks(livelibBooks, existingBooks = []) {
+export function mergeExistingLiveLibBooks(
+  livelibBooks: readonly LiveLibBook[],
+  existingBooks: readonly ExistingBook[] = []
+): ExistingBook[] {
   return matchBooksByLiveLibUrl(livelibBooks, existingBooks).matched.map(
     (match) =>
       match.existingBook
         ? bookWithLiveLibSource(
-            normalizeBookAudiobookUrls(match.existingBook),
+            normalizeBookAudiobookUrls(match.existingBook) as ExistingBook,
             match.livelibBook
           )
         : {
@@ -599,8 +662,8 @@ export function mergeExistingLiveLibBooks(livelibBooks, existingBooks = []) {
   );
 }
 
-function bookWithLiveLibSource(existingBook, livelibBook) {
-  const book = { ...existingBook };
+function bookWithLiveLibSource(existingBook: ExistingBook, livelibBook: LiveLibBook): ExistingBook {
+  const book: ExistingBook = { ...existingBook };
   if (!Array.isArray(book.authors) || book.authors.length === 0) {
     book.authors = uniqueBookAuthors(livelibBook.authors);
   }
