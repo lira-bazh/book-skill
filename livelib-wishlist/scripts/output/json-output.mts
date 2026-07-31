@@ -1,7 +1,7 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
-import { normalizeBookAudiobookUrls } from './book-url-fields.mjs';
+import { normalizeBookAudiobookUrls } from '../books/book-url-fields.mjs';
 
 type HtmlPage = {
   url: string;
@@ -34,8 +34,18 @@ export async function booksJsonExists(path: string): Promise<boolean> {
 
 export async function writeBooksJson(path: string, books: readonly unknown[]): Promise<string> {
   const outputPath = resolve(path);
+  const temporaryOutputPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+
   await mkdir(dirname(outputPath), { recursive: true });
-  await writeFile(outputPath, `${JSON.stringify(books, null, 2)}\n`, 'utf8');
+
+  try {
+    await writeFile(temporaryOutputPath, `${JSON.stringify(books, null, 2)}\n`, 'utf8');
+    await rename(temporaryOutputPath, outputPath);
+  } catch (error) {
+    await unlink(temporaryOutputPath).catch(() => {});
+    throw error;
+  }
+
   return outputPath;
 }
 

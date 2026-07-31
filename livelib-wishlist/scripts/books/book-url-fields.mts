@@ -1,4 +1,4 @@
-import { cleanText } from './text-match.mjs';
+import { cleanText, parseHttpUrl } from '../core/text-match.mjs';
 
 export type AudiobookEntryInput = string | {
   url?: unknown;
@@ -66,11 +66,8 @@ export function isRutrackerUrl(rawUrl: AudiobookEntryInput): boolean {
     return false;
   }
 
-  try {
-    return new URL(url).hostname.toLowerCase().endsWith('rutracker.org');
-  } catch {
-    return url.toLowerCase().includes('rutracker.org/');
-  }
+  return parseHttpUrl(url)?.hostname.toLowerCase().endsWith('rutracker.org')
+    ?? url.toLowerCase().includes('rutracker.org/');
 }
 
 export function uniqueUrls(urls: readonly unknown[]): string[] {

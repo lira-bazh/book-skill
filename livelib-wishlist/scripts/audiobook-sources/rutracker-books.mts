@@ -1,9 +1,16 @@
 import { load, type CheerioAPI } from "cheerio";
 
-import { extractLabeledPageTextValue } from "./audiobook-page-fields.mjs";
-import { buildBookSearchQuery } from "./book-search-query.mjs";
-import { type AudiobookEntryInput, isRutrackerUrl, mergeAudiobookUrls } from "./book-url-fields.mjs";
-import { cleanText, normalizeForMatch, stripParentheticalText } from "./text-match.mjs";
+import { defaultSleep } from "../core/async-utils.mjs";
+import { extractLabeledPageTextValue } from "../audiobooks/audiobook-page-fields.mjs";
+import { buildBookSearchQuery } from "../books/book-search-query.mjs";
+import { type AudiobookEntryInput, isRutrackerUrl, mergeAudiobookUrls } from "../books/book-url-fields.mjs";
+import {
+  cleanText,
+  isHostnameIn,
+  normalizeForMatch,
+  parseHttpUrl,
+  stripParentheticalText
+} from "../core/text-match.mjs";
 
 type BookLike = Record<string, unknown> & {
   title?: unknown;
@@ -303,18 +310,8 @@ export function normalizeRutrackerUrl(
   rawUrl: string | undefined,
   baseUrl = RUTRACKER_BASE_URL
 ): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl ?? "", baseUrl);
-  } catch {
-    return null;
-  }
-
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    return null;
-  }
-
-  if (parsed.hostname.toLowerCase() !== RUTRACKER_HOSTNAME) {
+  const parsed = parseHttpUrl(rawUrl, baseUrl);
+  if (!parsed || !isHostnameIn(parsed.hostname, [RUTRACKER_HOSTNAME])) {
     return null;
   }
 
@@ -614,10 +611,4 @@ export async function enrichBooksWithRutrackerUrls(
   }
 
   return enrichedBooks;
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
 }

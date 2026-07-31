@@ -14,6 +14,32 @@ export function stripParentheticalText(value: unknown): string {
   return cleanText(text);
 }
 
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+}
+
+export function parseHttpUrl(rawUrl: string | undefined, baseUrl?: string): URL | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl ?? '', baseUrl);
+  } catch {
+    return null;
+  }
+
+  return ['http:', 'https:'].includes(parsed.protocol) ? parsed : null;
+}
+
+export function stripTrailingSlash(value: string): string {
+  return value.replace(/\/$/u, '');
+}
+
+export function isHostnameIn(hostname: string, allowedHostnames: readonly string[]): boolean {
+  const normalizedHostname = hostname.toLowerCase();
+  return allowedHostnames.some((allowedHostname) => (
+    normalizedHostname === allowedHostname.toLowerCase()
+  ));
+}
+
 export function extractHrefValues(html: string): string[] {
   const hrefs: string[] = [];
   const linkRe = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
@@ -24,6 +50,25 @@ export function extractHrefValues(html: string): string[] {
   }
 
   return hrefs;
+}
+
+export function extractNormalizedHrefUrls(
+  html: string,
+  baseUrl: string,
+  normalizeUrl: (rawUrl: string | undefined, baseUrl: string) => string | null
+): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  for (const href of extractHrefValues(html)) {
+    const normalizedUrl = normalizeUrl(href, baseUrl);
+    if (normalizedUrl && !seen.has(normalizedUrl)) {
+      seen.add(normalizedUrl);
+      urls.push(normalizedUrl);
+    }
+  }
+
+  return urls;
 }
 
 export function normalizeForMatch(value: unknown): string {

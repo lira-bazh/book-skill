@@ -1,4 +1,4 @@
-import { cleanText, stripParentheticalText } from './text-match.mjs';
+import { cleanText, stripParentheticalText } from '../core/text-match.mjs';
 
 type BookSearchQueryBook = {
   title?: string | null;

@@ -1,16 +1,20 @@
 import { load, type CheerioAPI } from 'cheerio';
 
-import { extractLabeledPageTextValue } from './audiobook-page-fields.mjs';
+import { defaultSleep } from '../core/async-utils.mjs';
+import { extractLabeledPageTextValue } from '../audiobooks/audiobook-page-fields.mjs';
 import {
   cleanText,
-  extractHrefValues,
+  extractNormalizedHrefUrls,
   hasTokenOverlap,
+  isHostnameIn,
   normalizeForMatch,
+  parseHttpUrl,
   stripParentheticalText,
-} from './text-match.mjs';
-import { buildBookSearchQuery } from './book-search-query.mjs';
-import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
-import { LIVELIB_SOURCE_BOOK, type LiveLibBook } from './livelib.mjs';
+  stripTrailingSlash,
+} from '../core/text-match.mjs';
+import { buildBookSearchQuery } from '../books/book-search-query.mjs';
+import { mergeAudiobookUrls, splitAudiobookUrls } from '../books/book-url-fields.mjs';
+import { LIVELIB_SOURCE_BOOK, type LiveLibBook } from '../livelib/livelib.mjs';
 
 type BookLike = Record<string | symbol, unknown> & {
   title?: unknown;
@@ -210,22 +214,12 @@ export function normalizeYandexBooksUrl(
   rawUrl: string | undefined,
   baseUrl = 'https://books.yandex.ru/'
 ): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl ?? '', baseUrl);
-  } catch {
+  const parsed = parseHttpUrl(rawUrl, baseUrl);
+  if (!parsed || !isHostnameIn(parsed.hostname, ['books.yandex.ru'])) {
     return null;
   }
 
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    return null;
-  }
-
-  if (parsed.hostname.toLowerCase() !== 'books.yandex.ru') {
-    return null;
-  }
-
-  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (!YANDEX_BOOKS_ITEM_PATH_RE.test(normalizedPath)) {
     return null;
   }
@@ -237,18 +231,7 @@ export function extractYandexBooksUrls(
   html: string,
   baseUrl = 'https://books.yandex.ru/'
 ): string[] {
-  const urls: string[] = [];
-  const seen = new Set<string>();
-
-  for (const href of extractHrefValues(html)) {
-    const normalizedUrl = normalizeYandexBooksUrl(href, baseUrl);
-    if (normalizedUrl && !seen.has(normalizedUrl)) {
-      seen.add(normalizedUrl);
-      urls.push(normalizedUrl);
-    }
-  }
-
-  return urls;
+  return extractNormalizedHrefUrls(html, baseUrl, normalizeYandexBooksUrl);
 }
 
 export function extractYandexBooksSearchResults(
@@ -487,11 +470,10 @@ function isYandexBooksHostUrl(rawUrl: unknown): boolean {
     return false;
   }
 
-  try {
-    return new URL(url).hostname.toLowerCase() === 'books.yandex.ru';
-  } catch {
-    return url.toLowerCase().includes('books.yandex.ru/');
-  }
+  const parsed = parseHttpUrl(url);
+  return parsed
+    ? isHostnameIn(parsed.hostname, ['books.yandex.ru'])
+    : url.toLowerCase().includes('books.yandex.ru/');
 }
 
 function hasYandexBooksAudiobookUrl(book: BookLike | null | undefined): boolean {
@@ -527,9 +509,7 @@ export async function enrichBooksWithYandexBooksUrls(
     maxResults = Infinity,
     delayMs = 0,
     onSearchError = () => {},
-    sleep = (ms) => new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    }),
+    sleep = defaultSleep,
   }: EnrichBooksWithYandexBooksUrlsOptions = {},
 ): Promise<BookLike[]> {
   const enrichedBooks: BookLike[] = [];
@@ -539,7 +519,7 @@ export async function enrichBooksWithYandexBooksUrls(
       .map((book) => [book.url, book]),
   );
   const searchPageFetcher = fetchSearchPage
-    ?? (await import('./browser.mjs')).fetchYandexBooksSearchPageWithBrowser as SearchPageFetcher;
+    ?? (await import('../browser/browser.mjs')).fetchYandexBooksSearchPageWithBrowser as SearchPageFetcher;
   let searchedBooks = 0;
 
   for (const book of books) {

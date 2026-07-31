@@ -14,21 +14,7 @@
   },
   "include": [
     "livelib-wishlist/scripts/**/*.mjs",
-    "livelib-wishlist/scripts/livelib-wish-to-json.mts",
-    "livelib-wishlist/scripts/lib/audiobook-duration.mts",
-    "livelib-wishlist/scripts/lib/audiobook-page-fields.mts",
-    "livelib-wishlist/scripts/lib/browser.mts",
-    "livelib-wishlist/scripts/lib/book-search-query.mts",
-    "livelib-wishlist/scripts/lib/book-search-match.mts",
-    "livelib-wishlist/scripts/lib/book-url-fields.mts",
-    "livelib-wishlist/scripts/lib/book-details-enrichment.mts",
-    "livelib-wishlist/scripts/lib/json-output.mts",
-    "livelib-wishlist/scripts/lib/livelib.mts",
-    "livelib-wishlist/scripts/lib/livelib-book-page.mts",
-    "livelib-wishlist/scripts/lib/litres-books.mts",
-    "livelib-wishlist/scripts/lib/rutracker-books.mts",
-    "livelib-wishlist/scripts/lib/text-match.mts",
-    "livelib-wishlist/scripts/lib/yandex-books.mts"
+    "livelib-wishlist/scripts/**/*.mts"
   ],
   "exclude": ["livelib-wishlist/dist"]
 }

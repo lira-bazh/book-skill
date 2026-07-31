@@ -1,6 +1,6 @@
 import { appendFileSync } from 'node:fs';
 
-import { cleanText, normalizeForMatch } from './text-match.mjs';
+import { cleanText, normalizeForMatch } from '../core/text-match.mjs';
 
 type SearchBook = {
   title?: unknown;
@@ -20,7 +20,7 @@ type FilterSearchResultsOptions = {
 const AUTHOR_ET_AL_RE = /(?:^|[\s,;])и\s+др\.?$/iu;
 const AUTHOR_SEPARATOR_RE = /\s*(?:[,;]|\s+[&+]\s+)\s*/u;
 const TITLE_MATCH_STOP_RE = /[.:?]/u;
-const SEARCH_MATCH_LOG_FILE = process.env.BOOK_SEARCH_MATCH_LOG_FILE ?? '/tmp/book-search-match.log';
+const SEARCH_MATCH_LOG_FILE = process.env.BOOK_SEARCH_MATCH_LOG_FILE;
 
 export function isSearchResultSimilarToBook(result: SearchResult, book: SearchBook): boolean {
   if (!isSearchResultTitleSimilarToBook(book?.title, result?.title)) {
@@ -94,5 +94,9 @@ function cleanValues(values: unknown): unknown[] {
 }
 
 function logSearchMatchComparison(message: string): void {
+  if (!SEARCH_MATCH_LOG_FILE) {
+    return;
+  }
+
   appendFileSync(SEARCH_MATCH_LOG_FILE, `${message}\n`, 'utf8');
 }

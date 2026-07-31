@@ -2,18 +2,19 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page, Response } from 'playwright';
 
+import { sleep } from '../core/async-utils.mjs';
 import {
   extractWishlistPageUrls,
   getWishlistPaginationPageNumber,
   isWishlistContentUrl,
   LiveLibAccessError,
   normalizeBookUrl,
-} from './livelib.mjs';
-import { buildLitresSearchUrl } from './litres-books.mjs';
-import { buildRutrackerSearchUrl } from './rutracker-books.mjs';
-import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
-import { isAudiobookUrl, isRutrackerUrl } from './book-url-fields.mjs';
-import { cleanText } from './text-match.mjs';
+} from '../livelib/livelib.mjs';
+import { buildLitresSearchUrl } from '../audiobook-sources/litres-books.mjs';
+import { buildRutrackerSearchUrl } from '../audiobook-sources/rutracker-books.mjs';
+import { buildYandexBooksSearchUrl } from '../audiobook-sources/yandex-books.mjs';
+import { isAudiobookUrl, isRutrackerUrl } from '../books/book-url-fields.mjs';
+import { cleanText, isHostnameIn, parseHttpUrl, stripTrailingSlash } from '../core/text-match.mjs';
 
 type PlaywrightApi = typeof import('playwright');
 
@@ -108,12 +109,6 @@ export function resolveProfileDir(profileDir = DEFAULT_PROFILE_DIR): string {
   return resolve(profileDir);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolveSleep) => {
-    setTimeout(resolveSleep, ms);
-  });
-}
-
 function errorMessage(error: unknown): string {
   return typeof error === 'object' && error !== null
     ? String((error as ErrorWithMessage).message ?? '')
@@ -152,13 +147,12 @@ function createRetriableResponseError(url: string, status: number | null): Error
 }
 
 function isLiveLibRateLimitCaptchaUrl(rawUrl: string): boolean {
-  try {
-    const parsed = new URL(rawUrl);
-    return parsed.hostname.toLowerCase() === 'www.livelib.ru'
-      && parsed.pathname.replace(/\/$/, '') === '/service/ratelimitcaptcha';
-  } catch {
-    return false;
-  }
+  const parsed = parseHttpUrl(rawUrl);
+  return Boolean(
+    parsed
+    && isHostnameIn(parsed.hostname, ['www.livelib.ru'])
+    && stripTrailingSlash(parsed.pathname) === '/service/ratelimitcaptcha'
+  );
 }
 
 async function gotoWithRetry(

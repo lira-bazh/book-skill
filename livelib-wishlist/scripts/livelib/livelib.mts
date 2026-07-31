@@ -1,7 +1,15 @@
 import { load, type CheerioAPI } from "cheerio";
 
-import { normalizeBookAudiobookUrls } from "./book-url-fields.mjs";
-import { cleanText, extractHrefValues } from "./text-match.mjs";
+import { normalizeBookAudiobookUrls } from "../books/book-url-fields.mjs";
+import {
+  cleanText,
+  escapeRegExp,
+  extractHrefValues,
+  extractNormalizedHrefUrls,
+  isHostnameIn,
+  parseHttpUrl,
+  stripTrailingSlash
+} from "../core/text-match.mjs";
 
 export type LiveLibBook = {
   title: string;
@@ -49,10 +57,6 @@ const WISHLIST_BOOK_AUTHOR_SELECTOR = '[class*="BookCard_BookCardAuthor"]';
 export class LiveLibAccessError extends Error {}
 export const LIVELIB_SOURCE_BOOK: unique symbol = Symbol("livelibSourceBook");
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 export function parseLivelibWishlistUrl(rawUrl: string): ParsedWishlistUrl {
   const parsed = new URL(rawUrl);
 
@@ -91,18 +95,8 @@ export function normalizeWishlistPageUrl(
   username: string,
   baseUrl: string
 ): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl, baseUrl);
-  } catch {
-    return null;
-  }
-
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    return null;
-  }
-
-  if (parsed.hostname.toLowerCase() !== "www.livelib.ru") {
+  const parsed = parseHttpUrl(rawUrl, baseUrl);
+  if (!parsed || !isHostnameIn(parsed.hostname, ["www.livelib.ru"])) {
     return null;
   }
 
@@ -112,7 +106,7 @@ export function normalizeWishlistPageUrl(
   }
 
   const expectedPath = `/reader/${username}/wish`;
-  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   const listViewMatch = normalizedPath.match(
     new RegExp(`^${escapeRegExp(expectedPath)}/listview/[^/]+/~([0-9]+)$`)
   );
@@ -179,9 +173,9 @@ export function getWishlistPaginationPageNumber(
 }
 
 function normalizeUserWishlistPageUrl(parsed: URL): string | null {
-  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (
-    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !isHostnameIn(parsed.hostname, ["www.livelib.ru"]) ||
     !USER_WISHLIST_PATH_RE.test(normalizedPath)
   ) {
     return null;
@@ -210,9 +204,9 @@ function normalizeUserWishlistPageUrl(parsed: URL): string | null {
 }
 
 function getUserWishlistPageNumber(parsed: URL): number | null {
-  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (
-    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !isHostnameIn(parsed.hostname, ["www.livelib.ru"]) ||
     !USER_WISHLIST_PATH_RE.test(normalizedPath)
   ) {
     return null;
@@ -326,16 +320,14 @@ function extractWishlistDomPageCount($: CheerioAPI, paginator: CheerioSelection)
 }
 
 function normalizeUserWishlistBaseUrl(rawUrl: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
+  const parsed = parseHttpUrl(rawUrl);
+  if (!parsed) {
     return null;
   }
 
-  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (
-    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !isHostnameIn(parsed.hostname, ["www.livelib.ru"]) ||
     !USER_WISHLIST_PATH_RE.test(normalizedPath)
   ) {
     return null;
@@ -367,16 +359,14 @@ function extractUserWishlistBaseUrlFromPaginator(
 }
 
 function getWishlistDomCurrentPageNumber(rawUrl: string): number | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
+  const parsed = parseHttpUrl(rawUrl);
+  if (!parsed) {
     return null;
   }
 
-  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (
-    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !isHostnameIn(parsed.hostname, ["www.livelib.ru"]) ||
     !USER_WISHLIST_PATH_RE.test(normalizedPath)
   ) {
     return null;
@@ -398,17 +388,15 @@ export function isWishlistContentUrl(
   username: string,
   baseUrl: string
 ): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl, baseUrl);
-  } catch {
+  const parsed = parseHttpUrl(rawUrl, baseUrl);
+  if (!parsed) {
     return false;
   }
 
   const expectedPath = `/reader/${username}/wish`;
-  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (
-    parsed.hostname.toLowerCase() === "www.livelib.ru" &&
+    isHostnameIn(parsed.hostname, ["www.livelib.ru"]) &&
     normalizedPath === expectedPath &&
     parsed.search === ""
   ) {
@@ -416,7 +404,7 @@ export function isWishlistContentUrl(
   }
 
   if (
-    parsed.hostname.toLowerCase() === "www.livelib.ru" &&
+    isHostnameIn(parsed.hostname, ["www.livelib.ru"]) &&
     USER_WISHLIST_PATH_RE.test(normalizedPath) &&
     parsed.search === ""
   ) {
@@ -427,22 +415,12 @@ export function isWishlistContentUrl(
 }
 
 export function normalizeBookUrl(rawUrl: string | undefined, baseUrl: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl ?? "", baseUrl);
-  } catch {
+  const parsed = parseHttpUrl(rawUrl, baseUrl);
+  if (!parsed || !isHostnameIn(parsed.hostname, ["www.livelib.ru"])) {
     return null;
   }
 
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    return null;
-  }
-
-  if (parsed.hostname.toLowerCase() !== "www.livelib.ru") {
-    return null;
-  }
-
-  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (!BOOK_ITEM_PATH_RE.test(normalizedPath)) {
     return null;
   }
@@ -451,18 +429,7 @@ export function normalizeBookUrl(rawUrl: string | undefined, baseUrl: string): s
 }
 
 export function extractBookUrls(html: string, baseUrl: string): string[] {
-  const urls: string[] = [];
-  const seen = new Set<string>();
-
-  for (const href of extractHrefValues(html)) {
-    const normalizedUrl = normalizeBookUrl(href, baseUrl);
-    if (normalizedUrl && !seen.has(normalizedUrl)) {
-      seen.add(normalizedUrl);
-      urls.push(normalizedUrl);
-    }
-  }
-
-  return urls;
+  return extractNormalizedHrefUrls(html, baseUrl, normalizeBookUrl);
 }
 
 export function extractBooks(html: string, baseUrl: string): LiveLibBook[] {
@@ -562,10 +529,8 @@ function getNumericSearchParam(rawUrl: string | undefined, name: string): number
     return null;
   }
 
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl, "https://www.livelib.ru");
-  } catch {
+  const parsed = parseHttpUrl(rawUrl, "https://www.livelib.ru");
+  if (!parsed) {
     return null;
   }
 

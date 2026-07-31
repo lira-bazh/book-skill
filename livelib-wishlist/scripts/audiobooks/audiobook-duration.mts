@@ -1,3 +1,4 @@
+import { defaultSleep } from '../core/async-utils.mjs';
 import {
   type AudiobookEntry,
   audiobookEntriesForBook,
@@ -6,20 +7,20 @@ import {
   isAudiobookUrl,
   isRutrackerUrl,
   mergeAudiobookUrls,
-} from './book-url-fields.mjs';
+} from '../books/book-url-fields.mjs';
 import {
   extractLitresAudiobookDurationMinutes,
   extractLitresAudiobookNarrator,
-} from './litres-books.mjs';
+} from '../audiobook-sources/litres-books.mjs';
 import {
   extractRutrackerAudiobookDurationText,
   extractRutrackerAudiobookNarrator,
   extractRutrackerAudiobookTitle,
-} from './rutracker-books.mjs';
+} from '../audiobook-sources/rutracker-books.mjs';
 import {
   extractYandexBooksAudiobookDurationMinutes,
   extractYandexBooksAudiobookNarrator,
-} from './yandex-books.mjs';
+} from '../audiobook-sources/yandex-books.mjs';
 
 export { isAudiobookUrl };
 
@@ -226,9 +227,7 @@ export async function enrichBooksWithAudiobookDuration(
     fetchAudiobookPage,
     pageDelayMs = 0,
     onFetchError,
-    sleep = (ms) => new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    }),
+    sleep = defaultSleep,
   }: EnrichBooksWithAudiobookDurationOptions = {},
 ): Promise<EnrichedAudiobookDurationBook[]> {
   if (!Array.isArray(books)) {

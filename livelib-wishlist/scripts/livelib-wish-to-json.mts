@@ -2,44 +2,44 @@
 
 import { createInterface } from "node:readline/promises";
 
-import { enrichBooksWithMissingDetails } from "./lib/book-details-enrichment.mjs";
+import { enrichBooksWithMissingDetails } from "./books/book-details-enrichment.mjs";
 import {
   audiobookEntriesForBook,
   isRutrackerUrl
-} from "./lib/book-url-fields.mjs";
+} from "./books/book-url-fields.mjs";
 import {
   DEFAULT_MAX_PAGES,
   type BrowserSession,
   fetchYandexBooksSearchPageWithBrowser,
   withBrowserSession,
   withLitresSearchBrowserSession
-} from "./lib/browser.mjs";
+} from "./browser/browser.mjs";
 import {
   booksJsonExists,
   loadBooksJsonIfExists,
   loadHtmlFile,
   writeBooksJson
-} from "./lib/json-output.mjs";
+} from "./output/json-output.mjs";
 import {
   extractBooksFromPages,
   type LiveLibBook,
   matchBooksByLiveLibUrl,
   mergeExistingLiveLibBooks,
   parseLivelibWishlistUrl
-} from "./lib/livelib.mjs";
+} from "./livelib/livelib.mjs";
 import {
   countBooksWithExistingLitresUrls,
   enrichBooksWithLitresUrls
-} from "./lib/litres-books.mjs";
+} from "./audiobook-sources/litres-books.mjs";
 import {
   countBooksWithExistingRutrackerUrls,
   enrichBooksWithRutrackerUrls,
   fetchRutrackerSearchPage
-} from "./lib/rutracker-books.mjs";
+} from "./audiobook-sources/rutracker-books.mjs";
 import {
   countBooksWithExistingYandexBooksUrls,
   enrichBooksWithYandexBooksUrls
-} from "./lib/yandex-books.mjs";
+} from "./audiobook-sources/yandex-books.mjs";
 
 const DEFAULT_MAX_RESULTS = 5;
 const FIXED_REQUEST_DELAY_MS = 3000;
@@ -69,6 +69,10 @@ type CliArgs = {
   help?: boolean;
   url?: string;
 };
+
+type ParsedCliArgs =
+  | { ok: true; args: CliArgs }
+  | { ok: false; error: string };
 
 type SearchPage = {
   query?: string;
@@ -175,7 +179,7 @@ function hasAverageAudiobookDuration(book: AppBook): boolean {
   return Number.isFinite(book?.audiobook_duration_minutes);
 }
 
-function parseArgs(argv: readonly string[]): CliArgs {
+function parseArgs(argv: readonly string[]): ParsedCliArgs {
   const args: CliArgs = {
     out: "wishlist.json",
     html: null,
@@ -185,29 +189,61 @@ function parseArgs(argv: readonly string[]): CliArgs {
   };
   const positional: string[] = [];
 
+  const nextFlagValue = (index: number): string | null => {
+    const value = argv[index + 1];
+    return value && !value.startsWith("-") ? value : null;
+  };
+
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--") {
       continue;
     } else if (arg === "--out") {
-      args.out = argv[++i] ?? args.out;
+      const value = nextFlagValue(i);
+      if (!value) {
+        return { ok: false, error: "--out requires a value" };
+      }
+      args.out = value;
+      i += 1;
     } else if (arg === "--html") {
-      args.html = argv[++i] ?? null;
+      const value = nextFlagValue(i);
+      if (!value) {
+        return { ok: false, error: "--html requires a value" };
+      }
+      args.html = value;
+      i += 1;
     } else if (arg === "--max-pages") {
-      args.maxPages = Number.parseInt(argv[++i] ?? "", 10);
+      const value = nextFlagValue(i);
+      if (!value) {
+        return { ok: false, error: "--max-pages requires a value" };
+      }
+      args.maxPages = Number(value);
+      i += 1;
     } else if (arg === "--profile-dir") {
-      args.profileDir = argv[++i];
+      const value = nextFlagValue(i);
+      if (!value) {
+        return { ok: false, error: "--profile-dir requires a value" };
+      }
+      args.profileDir = value;
+      i += 1;
     } else if (arg === "--max-results" || arg === "--yandex-max-results") {
-      args.maxResults = Number.parseInt(argv[++i] ?? "", 10);
+      const value = nextFlagValue(i);
+      if (!value) {
+        return { ok: false, error: `${arg} requires a value` };
+      }
+      args.maxResults = Number(value);
+      i += 1;
     } else if (arg === "-h" || arg === "--help") {
       args.help = true;
+    } else if (arg.startsWith("-")) {
+      return { ok: false, error: `unknown option: ${arg}` };
     } else {
       positional.push(arg);
     }
   }
 
   args.url = positional[0];
-  return args;
+  return { ok: true, args };
 }
 
 function printHelp() {
@@ -281,11 +317,22 @@ export async function main(
     writeBooksJsonFn = writeBooksJson
   }: MainDependencies = {}
 ): Promise<number> {
-  const args = parseArgs(argv);
+  const parsedArgs = parseArgs(argv);
+  if (!parsedArgs.ok) {
+    console.error(`error: ${parsedArgs.error}`);
+    return 2;
+  }
+
+  const { args } = parsedArgs;
 
   if (args.help || !args.url) {
     printHelp();
     return args.help ? 0 : 2;
+  }
+
+  if (!Number.isInteger(args.maxPages) || args.maxPages < 1) {
+    console.error("error: --max-pages must be a positive integer");
+    return 2;
   }
 
   if (!Number.isInteger(args.maxResults) || args.maxResults < 1) {

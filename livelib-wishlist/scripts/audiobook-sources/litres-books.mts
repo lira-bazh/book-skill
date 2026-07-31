@@ -1,18 +1,22 @@
 import { load, type CheerioAPI } from 'cheerio';
 
-import { extractLabeledPageTextValue } from './audiobook-page-fields.mjs';
+import { defaultSleep } from '../core/async-utils.mjs';
+import { extractLabeledPageTextValue } from '../audiobooks/audiobook-page-fields.mjs';
 import {
   cleanText,
-  extractHrefValues,
+  extractNormalizedHrefUrls,
   hasTokenOverlap,
+  isHostnameIn,
   normalizeForMatch,
-} from './text-match.mjs';
-import { buildBookSearchQuery } from './book-search-query.mjs';
+  parseHttpUrl,
+  stripTrailingSlash,
+} from '../core/text-match.mjs';
+import { buildBookSearchQuery } from '../books/book-search-query.mjs';
 import {
   filterSearchResultsForBook,
   isSearchResultSimilarToBook,
-} from './book-search-match.mjs';
-import { mergeAudiobookUrls, splitAudiobookUrls } from './book-url-fields.mjs';
+} from '../books/book-search-match.mjs';
+import { mergeAudiobookUrls, splitAudiobookUrls } from '../books/book-url-fields.mjs';
 
 type BookLike = Record<string, unknown> & {
   title?: unknown;
@@ -231,23 +235,12 @@ export function normalizeLitresUrl(
   rawUrl: string | undefined,
   baseUrl = 'https://www.litres.ru/'
 ): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl ?? '', baseUrl);
-  } catch {
+  const parsed = parseHttpUrl(rawUrl, baseUrl);
+  if (!parsed || !isHostnameIn(parsed.hostname, ['www.litres.ru', 'litres.ru'])) {
     return null;
   }
 
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    return null;
-  }
-
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname !== 'www.litres.ru' && hostname !== 'litres.ru') {
-    return null;
-  }
-
-  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const normalizedPath = stripTrailingSlash(parsed.pathname);
   if (!LITRES_ITEM_PATH_RE.test(normalizedPath)) {
     return null;
   }
@@ -259,18 +252,7 @@ export function extractLitresUrls(
   html: string,
   baseUrl = 'https://www.litres.ru/'
 ): string[] {
-  const urls: string[] = [];
-  const seen = new Set<string>();
-
-  for (const href of extractHrefValues(html)) {
-    const normalizedUrl = normalizeLitresUrl(href, baseUrl);
-    if (normalizedUrl && !seen.has(normalizedUrl)) {
-      seen.add(normalizedUrl);
-      urls.push(normalizedUrl);
-    }
-  }
-
-  return urls;
+  return extractNormalizedHrefUrls(html, baseUrl, normalizeLitresUrl);
 }
 
 function uniqueTexts(values: readonly unknown[]): string[] {
@@ -302,10 +284,8 @@ function getElementSearchText(element: unknown): string {
 }
 
 function isLitresAdUrl(rawUrl: string | undefined, baseUrl: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl ?? '', baseUrl);
-  } catch {
+  const parsed = parseHttpUrl(rawUrl, baseUrl);
+  if (!parsed) {
     return false;
   }
 
@@ -469,13 +449,13 @@ function isLitresHostUrl(rawUrl: unknown): boolean {
     return false;
   }
 
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return hostname === 'www.litres.ru' || hostname === 'litres.ru';
-  } catch {
-    const normalizedUrl = url.toLowerCase();
-    return normalizedUrl.includes('www.litres.ru/') || normalizedUrl.includes('litres.ru/');
+  const parsed = parseHttpUrl(url);
+  if (parsed) {
+    return isHostnameIn(parsed.hostname, ['www.litres.ru', 'litres.ru']);
   }
+
+  const normalizedUrl = url.toLowerCase();
+  return normalizedUrl.includes('www.litres.ru/') || normalizedUrl.includes('litres.ru/');
 }
 
 function hasLitresAudiobookUrl(book: BookLike | null | undefined): boolean {
@@ -511,9 +491,7 @@ export async function enrichBooksWithLitresUrls(
     maxResults = Infinity,
     delayMs = 0,
     onSearchError = () => {},
-    sleep = (ms) => new Promise((resolve) => {
-      setTimeout(resolve, ms);
-    }),
+    sleep = defaultSleep,
   }: EnrichBooksWithLitresUrlsOptions = {},
 ): Promise<BookLike[]> {
   const enrichedBooks: BookLike[] = [];

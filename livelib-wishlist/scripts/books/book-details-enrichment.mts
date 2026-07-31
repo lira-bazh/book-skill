@@ -1,5 +1,6 @@
 import { execFile, type ExecFileOptions } from 'node:child_process';
 
+import { defaultSleep } from '../core/async-utils.mjs';
 import {
   audiobookEntriesMissingDurationForBook,
   averageAudiobookEntryDurationMinutesForBook,
@@ -12,7 +13,7 @@ import {
   hasRecordedAudiobookEntryDuration,
   hasRecordedAudiobookDuration,
   withAverageAudiobookDuration,
-} from './audiobook-duration.mjs';
+} from '../audiobooks/audiobook-duration.mjs';
 import {
   type AudiobookEntryInput,
   audiobookEntriesForBook,
@@ -25,8 +26,9 @@ import {
   hasRecordedBookPageGenre,
   hasRecordedBookPageImage,
   needsBookPageDetails,
-} from './livelib-book-page.mjs';
-import { extractRutrackerAudiobookTitle } from './rutracker-books.mjs';
+} from '../livelib/livelib-book-page.mjs';
+import { extractRutrackerAudiobookTitle } from '../audiobook-sources/rutracker-books.mjs';
+import { isHostnameIn, parseHttpUrl } from '../core/text-match.mjs';
 
 type BookDetailsBook = Record<string, unknown> & {
   url?: string | null;
@@ -143,12 +145,6 @@ function addBookDetailsStats(target: BookDetailsStats, source: BookDetailsStats)
   }
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 function getSleepFn(sleep: SleepOptions, key: 'audiobook' | 'bookPage'): SleepFn {
   if (typeof sleep === 'function') {
     return sleep;
@@ -166,50 +162,35 @@ function isRutrackerTopicUrl(rawUrl: AudiobookEntryInput): boolean {
     return false;
   }
 
-  try {
-    const url = new URL(String(rawUrl));
-    return url.pathname === RUTRACKER_TOPIC_PATH && url.searchParams.has('t');
-  } catch {
-    return false;
-  }
+  const url = parseHttpUrl(String(rawUrl));
+  return Boolean(url && url.pathname === RUTRACKER_TOPIC_PATH && url.searchParams.has('t'));
 }
 
 function isYandexBooksAudiobookUrl(rawUrl: unknown): boolean {
-  try {
-    const url = new URL(String(rawUrl));
-    return (
-      url.hostname.toLowerCase().startsWith('books.yandex.')
-      && YANDEX_BOOKS_AUDIOBOOK_PATH_RE.test(url.pathname)
-    );
-  } catch {
-    return false;
-  }
+  const url = parseHttpUrl(String(rawUrl));
+  return Boolean(
+    url
+    && url.hostname.toLowerCase().startsWith('books.yandex.')
+    && YANDEX_BOOKS_AUDIOBOOK_PATH_RE.test(url.pathname)
+  );
 }
 
 function isLiveLibBookUrl(rawUrl: unknown): boolean {
-  try {
-    const url = new URL(String(rawUrl));
-    const hostname = url.hostname.toLowerCase();
-    return (
-      (hostname === 'www.livelib.ru' || hostname === 'livelib.ru')
-      && LIVELIB_BOOK_PATH_RE.test(url.pathname)
-    );
-  } catch {
-    return false;
-  }
+  const url = parseHttpUrl(String(rawUrl));
+  return Boolean(
+    url
+    && isHostnameIn(url.hostname, ['www.livelib.ru', 'livelib.ru'])
+    && LIVELIB_BOOK_PATH_RE.test(url.pathname)
+  );
 }
 
 function isLitresAudiobookUrl(rawUrl: unknown): boolean {
-  try {
-    const url = new URL(String(rawUrl));
-    const hostname = url.hostname.toLowerCase();
-    return (
-      (hostname === 'www.litres.ru' || hostname === 'litres.ru')
-      && LITRES_AUDIOBOOK_PATH_RE.test(url.pathname)
-    );
-  } catch {
-    return false;
-  }
+  const url = parseHttpUrl(String(rawUrl));
+  return Boolean(
+    url
+    && isHostnameIn(url.hostname, ['www.litres.ru', 'litres.ru'])
+    && LITRES_AUDIOBOOK_PATH_RE.test(url.pathname)
+  );
 }
 
 function execFileBuffer(
@@ -447,7 +428,6 @@ export async function enrichBookWithMissingDetails(
         fetchBookPage,
       });
       details = {
-        description: null,
         ...extractBookPageDetails(page?.html ?? '', page?.url ?? nextBook.url),
       };
     } catch (error) {

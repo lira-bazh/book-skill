@@ -1,8 +1,10 @@
 import { load, type CheerioAPI } from "cheerio";
 
-import { cleanText } from "./text-match.mjs";
+import { defaultSleep } from "../core/async-utils.mjs";
+import { cleanText, parseHttpUrl } from "../core/text-match.mjs";
 
 type BookPageDetails = {
+  description: string | null;
   image: string | null;
   genre: string | null;
 };
@@ -37,6 +39,7 @@ type EnrichBooksWithBookPageDetailsOptions = {
 };
 
 type EnrichedBookPageBook = Record<string, unknown> & {
+  description?: unknown;
   image?: unknown;
   genre?: unknown;
 };
@@ -50,12 +53,20 @@ const IMAGE_SELECTOR = [
   'meta[property="og:image"]',
   'meta[name="twitter:image"]'
 ].join(", ");
+const DESCRIPTION_SELECTOR = [
+  'meta[property="og:description"]',
+  'meta[name="description"]',
+  '[class*="ShortInfo_ShortInfoText"]',
+  '[class*="BookPageBookDescription"]',
+  '[class*="BookAnnotation"]'
+].join(", ");
 const GENRE_SELECTOR = ".bc-info__item";
 
 export function extractBookPageDetails(html: string, baseUrl: string): BookPageDetails {
   const $ = load(html);
 
   return {
+    description: extractBookPageDescription($),
     image: extractBookPageImage($, baseUrl),
     genre: extractBookPageGenre($)
   };
@@ -76,7 +87,11 @@ export function hasRecordedBookPageGenre(book: BookPageBook): boolean {
 }
 
 export function needsBookPageDetails(book: BookPageBook): boolean {
-  return !hasRecordedBookPageImage(book) || !hasRecordedBookPageGenre(book);
+  return (
+    !hasRecordedBookPageDescription(book) ||
+    !hasRecordedBookPageImage(book) ||
+    !hasRecordedBookPageGenre(book)
+  );
 }
 
 export async function enrichBooksWithBookPageDetails(
@@ -85,10 +100,7 @@ export async function enrichBooksWithBookPageDetails(
     fetchBookPage,
     pageDelayMs = 0,
     onFetchError,
-    sleep = (ms) =>
-      new Promise((resolveSleep) => {
-        setTimeout(resolveSleep, ms);
-      })
+    sleep = defaultSleep
   }: EnrichBooksWithBookPageDetailsOptions = {}
 ): Promise<EnrichedBookPageBook[]> {
   if (!Array.isArray(books)) {
@@ -107,7 +119,7 @@ export async function enrichBooksWithBookPageDetails(
       continue;
     }
 
-    let details: BookPageDetails = { image: null, genre: null };
+    let details: BookPageDetails = { description: null, image: null, genre: null };
     try {
       const page = await fetchBookPage({ url: book.url, book });
       details = extractBookPageDetails(page?.html ?? "", page?.url ?? book.url);
@@ -118,6 +130,9 @@ export async function enrichBooksWithBookPageDetails(
     }
 
     const enrichedBook = copyBook(book);
+    if (!hasRecordedBookPageDescription(enrichedBook) && details.description) {
+      enrichedBook.description = details.description;
+    }
     if (!hasRecordedBookPageImage(enrichedBook) && details.image) {
       enrichedBook.image = details.image;
     }
@@ -177,26 +192,26 @@ function firstSrcsetUrl(value: unknown): string | null {
 }
 
 function normalizeBookPageImageUrl(rawUrl: string | null | undefined, baseUrl: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl ?? "", baseUrl);
-  } catch {
-    return null;
+  return parseHttpUrl(rawUrl ?? undefined, baseUrl)?.toString() ?? null;
+}
+
+function extractBookPageDescription($: CheerioAPI): string | null {
+  for (const element of $(DESCRIPTION_SELECTOR).toArray()) {
+    const description = cleanText(
+      $(element).attr("content") ??
+      $(element).attr("aria-label") ??
+      $(element).text()
+    );
+    if (description) {
+      return description;
+    }
   }
 
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    return null;
-  }
-
-  return parsed.toString();
+  return null;
 }
 
 function extractBookPageId(baseUrl: string): string | null {
-  try {
-    return new URL(baseUrl).pathname.match(/^\/book\/(\d+)/u)?.[1] ?? null;
-  } catch {
-    return null;
-  }
+  return parseHttpUrl(baseUrl)?.pathname.match(/^\/book\/(\d+)/u)?.[1] ?? null;
 }
 
 function isBookPageCoverImageUrlForBook(rawUrl: string, bookId: string | null): boolean {
@@ -204,12 +219,7 @@ function isBookPageCoverImageUrlForBook(rawUrl: string, bookId: string | null): 
     return false;
   }
 
-  try {
-    const url = new URL(rawUrl);
-    return url.pathname.includes(`/boocover/${bookId}/`);
-  } catch {
-    return false;
-  }
+  return parseHttpUrl(rawUrl)?.pathname.includes(`/boocover/${bookId}/`) ?? false;
 }
 
 function extractBookPageGenre($: CheerioAPI): string | null {

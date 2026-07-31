@@ -1,6 +1,6 @@
 import { load, type CheerioAPI } from 'cheerio';
 
-import { cleanText } from './text-match.mjs';
+import { cleanText, escapeRegExp } from '../core/text-match.mjs';
 
 type ExtractLabeledPageTextValueOptions = {
   stopLabels?: readonly string[];
@@ -71,8 +71,4 @@ function extractValueFromText(
   }
 
   return cleanText(valueMatch[1]?.replace(/^[,;:]+|[,;:]+$/gu, '')) || null;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
