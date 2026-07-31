@@ -7,8 +7,6 @@ import { cleanText, normalizeForMatch, stripParentheticalText } from "./text-mat
 
 const RUTRACKER_HOSTNAME = "rutracker.org";
 const RUTRACKER_BASE_URL = `https://${RUTRACKER_HOSTNAME}/forum/`;
-const RUTRACKER_TORAPI_BASE_URL = "https://torapi.vercel.app";
-const RUTRACKER_TORAPI_SEARCH_PATH = "/api/search/title/rutracker";
 const RUTRACKER_AUTHOR_LABELS = ["Автор", "Авторы"];
 const RUTRACKER_TITLE_LABELS = ["Название", "Наименование"];
 const RUTRACKER_DURATION_LABELS = ["Время звучания", "Продолжительность"];
@@ -214,12 +212,10 @@ export function buildRutrackerSearchQuery(book) {
   return buildBookSearchQuery(book);
 }
 
-export function buildRutrackerTorApiSearchUrl(
+export function buildRutrackerSearchUrl(
   query,
   {
-    baseUrl = RUTRACKER_TORAPI_BASE_URL,
-    category = 0,
-    page = "all"
+    baseUrl = RUTRACKER_BASE_URL
   } = {}
 ) {
   const normalizedQuery = cleanText(query);
@@ -227,10 +223,8 @@ export function buildRutrackerTorApiSearchUrl(
     throw new Error("RuTracker search query must not be empty");
   }
 
-  const url = new URL(RUTRACKER_TORAPI_SEARCH_PATH, baseUrl);
-  url.searchParams.set("query", normalizedQuery);
-  url.searchParams.set("category", String(category));
-  url.searchParams.set("page", String(page));
+  const url = new URL("/forum/tracker.php", baseUrl);
+  url.searchParams.set("nm", normalizedQuery);
   return url.toString();
 }
 
@@ -265,23 +259,21 @@ export function normalizeRutrackerUrl(rawUrl, baseUrl = RUTRACKER_BASE_URL) {
   return `https://${RUTRACKER_HOSTNAME}/forum/viewtopic.php?t=${topicId}`;
 }
 
-export function extractRutrackerTorApiSearchResults(items) {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
+export function extractRutrackerSearchResultsFromHtml(html, baseUrl = RUTRACKER_BASE_URL) {
+  const $ = load(html);
   const results = [];
   const seen = new Set();
 
-  for (const item of items) {
-    const url = normalizeRutrackerUrl(item?.Url);
-    const title = cleanText(item?.Name);
+  for (const element of $('a[href*="viewtopic.php?t="]').toArray()) {
+    const link = $(element);
+    const url = normalizeRutrackerUrl(link.attr("href"), baseUrl);
+    const title = cleanText(link.text());
     if (!url || !title || seen.has(url)) {
       continue;
     }
 
-    const category = cleanText(item?.Category);
-    if (isExcludedRutrackerSearchRow(`${category} ${title}`)) {
+    const rowText = cleanText(link.closest("tr").text());
+    if (isExcludedRutrackerSearchRow(rowText || title)) {
       continue;
     }
 
@@ -380,13 +372,17 @@ function authorLastNameWords(authors) {
     .filter(Boolean);
 }
 
-export function extractMatchingRutrackerTorApiAudiobookEntries(
-  items,
+function extractRutrackerAudiobookEntriesFromSearchPage(
+  searchPage,
   book,
-  options = {}
+  options
 ) {
+  if (typeof searchPage?.html !== "string") {
+    return [];
+  }
+
   return filterRutrackerResultsForBook(
-    extractRutrackerTorApiSearchResults(items),
+    extractRutrackerSearchResultsFromHtml(searchPage.html, searchPage.url),
     book,
     options
   ).map((result) => ({
@@ -395,53 +391,30 @@ export function extractMatchingRutrackerTorApiAudiobookEntries(
   }));
 }
 
-function extractRutrackerAudiobookEntriesFromTorApiSearchPage(
-  searchPage,
-  book,
-  options
-) {
-  return extractMatchingRutrackerTorApiAudiobookEntries(
-    searchPage?.items ?? [],
-    book,
-    options
-  );
-}
-
-export async function fetchRutrackerSearchPageWithTorApi({
+export async function fetchRutrackerSearchPage({
   query,
-  baseUrl,
-  category,
-  page,
+  searchUrl,
   fetchImpl = globalThis.fetch
 }) {
   if (typeof fetchImpl !== "function") {
-    throw new Error("Fetch API is not available for TorAPI RuTracker search");
+    throw new Error("Fetch API is not available for RuTracker search");
   }
 
   const normalizedQuery = cleanText(query);
-  const searchUrl = buildRutrackerTorApiSearchUrl(normalizedQuery, {
-    baseUrl,
-    category,
-    page
-  });
-  const response = await fetchImpl(searchUrl, {
+  const targetUrl = searchUrl ?? buildRutrackerSearchUrl(normalizedQuery);
+  const response = await fetchImpl(targetUrl, {
     headers: {
-      accept: "application/json"
+      accept: "text/html,application/xhtml+xml"
     }
   });
   if (!response?.ok) {
-    throw new Error(`TorAPI RuTracker search failed with HTTP status ${response?.status ?? "unknown"}`);
-  }
-
-  const items = await response.json();
-  if (!Array.isArray(items)) {
-    throw new Error("TorAPI RuTracker search returned an unexpected response");
+    throw new Error(`RuTracker search failed with HTTP status ${response?.status ?? "unknown"}`);
   }
 
   return {
     query: normalizedQuery,
-    url: searchUrl,
-    items
+    url: targetUrl,
+    html: await response.text()
   };
 }
 
@@ -519,7 +492,7 @@ export async function enrichBooksWithRutrackerUrls(
       continue;
     }
 
-    const searchUrl = buildRutrackerTorApiSearchUrl(query);
+    const searchUrl = buildRutrackerSearchUrl(query);
 
     try {
       const searchPage = await fetchSearchPage({
@@ -528,7 +501,7 @@ export async function enrichBooksWithRutrackerUrls(
         searchUrl,
         profileDir
       });
-      const rutrackerUrls = extractRutrackerAudiobookEntriesFromTorApiSearchPage(
+      const rutrackerUrls = extractRutrackerAudiobookEntriesFromSearchPage(
         searchPage,
         book,
         { maxResults }

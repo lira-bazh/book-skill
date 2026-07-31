@@ -1,59 +1,55 @@
-import { load } from 'cheerio';
+import { load } from "cheerio";
 
-import { normalizeBookAudiobookUrls } from './book-url-fields.mjs';
-import { cleanText, extractHrefValues } from './text-match.mjs';
+import { normalizeBookAudiobookUrls } from "./book-url-fields.mjs";
+import { cleanText, extractHrefValues } from "./text-match.mjs";
 
 const WISHLIST_PATH_RE = /^\/reader\/([^/]+)\/wish\/?$/;
+const USER_WISHLIST_PATH_RE = /^\/users\/[0-9]+\/books\/want\/?$/;
 const BOOK_ITEM_PATH_RE = /^\/(?:book|work)\/[^/]+$/;
-const BOOK_PAGE_DESCRIPTION_SELECTOR = '.bc-about__txt';
-const DESCRIPTION_SELECTOR = [
-  BOOK_PAGE_DESCRIPTION_SELECTOR,
-  '[itemprop="description"]',
-  '.book-description',
-  '.book-card-description',
-  '.description',
-  '.annotation',
-  '[class*="description"]',
-  '[class*="annotation"]',
-].join(', ');
-const IMAGE_SELECTOR = [
-  'meta[property="og:image"]',
-  'meta[name="og:image"]',
-  'meta[itemprop="image"]',
-  'img[itemprop="image"]',
-  'img.book-cover',
-  'img[class*="cover"]',
-  'img[class*="book"]',
-].join(', ');
-const GENRE_SELECTOR = '.bc-info__item';
+const WISHLIST_LIST_SELECTOR =
+  '[class*="CollectionPageContent_CollectionPageContentList"]';
+const WISHLIST_PAGINATOR_SELECTOR =
+  '[class*="CollectionPageContent_CollectionPageContentPaginatorContainer"]';
+const WISHLIST_BOOK_AUTHOR_SELECTOR = '[class*="BookCard_BookCardAuthor"]';
 
 export class LiveLibAccessError extends Error {}
-export const LIVELIB_SOURCE_BOOK = Symbol('livelibSourceBook');
+export const LIVELIB_SOURCE_BOOK = Symbol("livelibSourceBook");
 
 function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function parseLivelibWishlistUrl(rawUrl) {
   const parsed = new URL(rawUrl);
 
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('URL must use http or https');
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error("URL must use http or https");
   }
 
-  if (parsed.hostname.toLowerCase() !== 'www.livelib.ru') {
-    throw new Error('URL host must be www.livelib.ru');
+  if (parsed.hostname.toLowerCase() !== "www.livelib.ru") {
+    throw new Error("URL host must be www.livelib.ru");
   }
 
-  const match = parsed.pathname.match(WISHLIST_PATH_RE);
-  if (!match) {
-    throw new Error('URL path must look like /reader/<username>/wish');
+  const readerMatch = parsed.pathname.match(WISHLIST_PATH_RE);
+  if (readerMatch) {
+    return {
+      username: readerMatch[1],
+      url: `https://www.livelib.ru${parsed.pathname.replace(/\/$/, "")}`
+    };
   }
 
-  return {
-    username: match[1],
-    url: `https://www.livelib.ru${parsed.pathname.replace(/\/$/, '')}`,
-  };
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  if (USER_WISHLIST_PATH_RE.test(normalizedPath) && parsed.search === "") {
+    const userId = normalizedPath.split("/")[2];
+    return {
+      username: userId,
+      url: `https://www.livelib.ru${normalizedPath}`
+    };
+  }
+
+  throw new Error(
+    "URL path must look like /reader/<username>/wish or /users/<id>/books/want"
+  );
 }
 
 export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
@@ -64,18 +60,23 @@ export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
     return null;
   }
 
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
+  if (!["http:", "https:"].includes(parsed.protocol)) {
     return null;
   }
 
-  if (parsed.hostname.toLowerCase() !== 'www.livelib.ru') {
+  if (parsed.hostname.toLowerCase() !== "www.livelib.ru") {
     return null;
+  }
+
+  const userWishlistUrl = normalizeUserWishlistPageUrl(parsed);
+  if (userWishlistUrl) {
+    return userWishlistUrl;
   }
 
   const expectedPath = `/reader/${username}/wish`;
-  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
   const listViewMatch = normalizedPath.match(
-    new RegExp(`^${escapeRegExp(expectedPath)}/listview/[^/]+/~([0-9]+)$`),
+    new RegExp(`^${escapeRegExp(expectedPath)}/listview/[^/]+/~([0-9]+)$`)
   );
 
   if (listViewMatch) {
@@ -93,10 +94,11 @@ export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
     return null;
   }
 
-  const pageValues = parsed.searchParams.getAll('page');
-  const allowedParams = new Set(['page']);
-  const hasOnlyPaginationParams = [...parsed.searchParams.keys()]
-    .every((name) => allowedParams.has(name));
+  const pageValues = parsed.searchParams.getAll("page");
+  const allowedParams = new Set(["page"]);
+  const hasOnlyPaginationParams = [...parsed.searchParams.keys()].every(
+    (name) => allowedParams.has(name)
+  );
 
   if (pageValues.length !== 1 || !hasOnlyPaginationParams) {
     return null;
@@ -112,10 +114,15 @@ export function normalizeWishlistPageUrl(rawUrl, username, baseUrl) {
 
 export function getWishlistPaginationPageNumber(rawUrl, username) {
   const parsed = new URL(rawUrl);
+  const userWishlistPageNumber = getUserWishlistPageNumber(parsed);
+  if (userWishlistPageNumber) {
+    return userWishlistPageNumber;
+  }
+
   const expectedPath = `/reader/${username}/wish`;
-  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
   const listViewMatch = normalizedPath.match(
-    new RegExp(`^${escapeRegExp(expectedPath)}/listview/[^/]+/~([0-9]+)$`),
+    new RegExp(`^${escapeRegExp(expectedPath)}/listview/[^/]+/~([0-9]+)$`)
   );
 
   if (listViewMatch) {
@@ -123,13 +130,67 @@ export function getWishlistPaginationPageNumber(rawUrl, username) {
   }
 
   if (normalizedPath === expectedPath) {
-    return Number.parseInt(parsed.searchParams.get('page'), 10);
+    return Number.parseInt(parsed.searchParams.get("page"), 10);
   }
 
   return null;
 }
 
+function normalizeUserWishlistPageUrl(parsed) {
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  if (
+    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !USER_WISHLIST_PATH_RE.test(normalizedPath)
+  ) {
+    return null;
+  }
+
+  if (parsed.search === "") {
+    return `https://www.livelib.ru${normalizedPath}`;
+  }
+
+  const pageValues = parsed.searchParams.getAll("page");
+  const hasOnlyPaginationParams = [...parsed.searchParams.keys()].every(
+    (name) => name === "page"
+  );
+
+  if (pageValues.length !== 1 || !hasOnlyPaginationParams) {
+    return null;
+  }
+
+  const pageNumber = Number.parseInt(pageValues[0], 10);
+  if (String(pageNumber) !== pageValues[0] || pageNumber < 2) {
+    return null;
+  }
+
+  return `https://www.livelib.ru${normalizedPath}?page=${pageNumber}`;
+}
+
+function getUserWishlistPageNumber(parsed) {
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  if (
+    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !USER_WISHLIST_PATH_RE.test(normalizedPath)
+  ) {
+    return null;
+  }
+
+  if (parsed.search === "") {
+    return 1;
+  }
+
+  const pageNumber = Number.parseInt(parsed.searchParams.get("page"), 10);
+  return String(pageNumber) === parsed.searchParams.get("page")
+    ? pageNumber
+    : null;
+}
+
 export function extractWishlistPageUrls(html, username, baseUrl) {
+  const domPageUrls = extractWishlistPageUrlsFromDom(html, baseUrl);
+  if (domPageUrls) {
+    return uniqueWishlistPageUrls(domPageUrls, username);
+  }
+
   const urls = [];
   const seenPageNumbers = new Set();
 
@@ -149,6 +210,136 @@ export function extractWishlistPageUrls(html, username, baseUrl) {
   return urls;
 }
 
+function uniqueWishlistPageUrls(pageUrls, username) {
+  const urls = [];
+  const seenPageNumbers = new Set();
+
+  for (const pageUrl of pageUrls) {
+    const pageNumber = getWishlistPaginationPageNumber(pageUrl, username);
+    if (!seenPageNumbers.has(pageNumber)) {
+      seenPageNumbers.add(pageNumber);
+      urls.push(pageUrl);
+    }
+  }
+
+  return urls;
+}
+
+function extractWishlistPageUrlsFromDom(html, baseUrl) {
+  const $ = load(html);
+  const paginator = $(WISHLIST_PAGINATOR_SELECTOR).first();
+  if (paginator.length === 0) {
+    return null;
+  }
+
+  const pageCount = extractWishlistDomPageCount($, paginator);
+  const basePageUrl =
+    normalizeUserWishlistBaseUrl(baseUrl) ??
+    extractUserWishlistBaseUrlFromPaginator($, paginator, baseUrl);
+  if (!basePageUrl || pageCount < 2) {
+    return [];
+  }
+
+  const currentPage = getWishlistDomCurrentPageNumber(baseUrl) ?? 1;
+  const urls = [];
+  for (
+    let pageNumber = currentPage + 1;
+    pageNumber <= pageCount;
+    pageNumber += 1
+  ) {
+    urls.push(`${basePageUrl}?page=${pageNumber}`);
+  }
+
+  return urls;
+}
+
+function extractWishlistDomPageCount($, paginator) {
+  const pageNumbers = [];
+  const textNumberRe = /^\d+$/u;
+
+  paginator
+    .find('a[href], button, [role="button"], span')
+    .each((_, element) => {
+      const text = cleanText($(element).text());
+      if (textNumberRe.test(text)) {
+        pageNumbers.push(Number.parseInt(text, 10));
+      }
+
+      const hrefPageNumber = getNumericSearchParam(
+        $(element).attr("href"),
+        "page"
+      );
+      if (Number.isInteger(hrefPageNumber)) {
+        pageNumbers.push(hrefPageNumber);
+      }
+    });
+
+  return pageNumbers.length > 0 ? Math.max(...pageNumbers) : 1;
+}
+
+function normalizeUserWishlistBaseUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  if (
+    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !USER_WISHLIST_PATH_RE.test(normalizedPath)
+  ) {
+    return null;
+  }
+
+  return `https://www.livelib.ru${normalizedPath}`;
+}
+
+function extractUserWishlistBaseUrlFromPaginator($, paginator, baseUrl) {
+  for (const element of paginator.find("a[href]").toArray()) {
+    let normalizedUrl;
+    try {
+      normalizedUrl = normalizeUserWishlistBaseUrl(
+        new URL($(element).attr("href"), baseUrl).toString()
+      );
+    } catch {
+      normalizedUrl = null;
+    }
+    if (normalizedUrl) {
+      return normalizedUrl;
+    }
+  }
+
+  return null;
+}
+
+function getWishlistDomCurrentPageNumber(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
+  if (
+    parsed.hostname.toLowerCase() !== "www.livelib.ru" ||
+    !USER_WISHLIST_PATH_RE.test(normalizedPath)
+  ) {
+    return null;
+  }
+
+  if (parsed.search === "") {
+    return 1;
+  }
+
+  const pageNumber = Number.parseInt(parsed.searchParams.get("page"), 10);
+  return String(pageNumber) === parsed.searchParams.get("page")
+    ? pageNumber
+    : null;
+}
+
 export function isWishlistContentUrl(rawUrl, username, baseUrl) {
   let parsed;
   try {
@@ -158,11 +349,19 @@ export function isWishlistContentUrl(rawUrl, username, baseUrl) {
   }
 
   const expectedPath = `/reader/${username}/wish`;
-  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
   if (
-    parsed.hostname.toLowerCase() === 'www.livelib.ru' &&
+    parsed.hostname.toLowerCase() === "www.livelib.ru" &&
     normalizedPath === expectedPath &&
-    parsed.search === ''
+    parsed.search === ""
+  ) {
+    return true;
+  }
+
+  if (
+    parsed.hostname.toLowerCase() === "www.livelib.ru" &&
+    USER_WISHLIST_PATH_RE.test(normalizedPath) &&
+    parsed.search === ""
   ) {
     return true;
   }
@@ -178,15 +377,15 @@ export function normalizeBookUrl(rawUrl, baseUrl) {
     return null;
   }
 
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
+  if (!["http:", "https:"].includes(parsed.protocol)) {
     return null;
   }
 
-  if (parsed.hostname.toLowerCase() !== 'www.livelib.ru') {
+  if (parsed.hostname.toLowerCase() !== "www.livelib.ru") {
     return null;
   }
 
-  const normalizedPath = parsed.pathname.replace(/\/$/, '');
+  const normalizedPath = parsed.pathname.replace(/\/$/, "");
   if (!BOOK_ITEM_PATH_RE.test(normalizedPath)) {
     return null;
   }
@@ -210,21 +409,59 @@ export function extractBookUrls(html, baseUrl) {
 }
 
 export function extractBooks(html, baseUrl) {
+  const domBooks = extractBooksFromWishlistDom(html, baseUrl);
+
+  return mergeWishlistBookSources(domBooks ?? []);
+}
+
+function mergeWishlistBookSources(...sources) {
+  const books = [];
+  const booksByUrl = new Map();
+
+  for (const source of sources) {
+    for (const book of source) {
+      const existingBook = booksByUrl.get(book.url);
+      if (!existingBook) {
+        const nextBook = {
+          title: cleanText(book.title),
+          authors: uniqueBookAuthors(book.authors),
+          url: book.url
+        };
+        booksByUrl.set(book.url, nextBook);
+        books.push(nextBook);
+        continue;
+      }
+
+      if (!existingBook.title) {
+        existingBook.title = cleanText(book.title);
+      }
+
+      if (existingBook.authors.length === 0) {
+        existingBook.authors = uniqueBookAuthors(book.authors);
+      }
+    }
+  }
+
+  return books;
+}
+
+function extractBooksFromWishlistDom(html, baseUrl) {
   const $ = load(html);
+  const list = $(WISHLIST_LIST_SELECTOR).first();
+  if (list.length === 0) {
+    return null;
+  }
+
   const books = [];
   const seen = new Set();
-  let links = $('a.brow-book-name[href]').toArray();
-
-  if (links.length === 0) {
-    links = $('a[href]').toArray().filter((element) => {
-      const title = cleanText($(element).text());
-      return title && normalizeBookUrl($(element).attr('href'), baseUrl);
-    });
-  }
+  const links = list
+    .find("a[href]")
+    .toArray()
+    .filter((element) => normalizeBookUrl($(element).attr("href"), baseUrl));
 
   for (const element of links) {
     const link = $(element);
-    const url = normalizeBookUrl(link.attr('href'), baseUrl);
+    const url = normalizeBookUrl(link.attr("href"), baseUrl);
     if (!url || seen.has(url)) {
       continue;
     }
@@ -234,13 +471,7 @@ export function extractBooks(html, baseUrl) {
       continue;
     }
 
-    const container = link.closest('.brow-book, .book-item, .ll-book, li');
-    const scope = container.length > 0 ? container : link.parent();
-    const authors = scope.find('a.brow-book-author')
-      .toArray()
-      .flatMap((author) => splitAuthorText($(author).text()))
-      .filter(Boolean)
-      .filter((author, index, values) => values.indexOf(author) === index);
+    const authors = extractWishlistDomBookAuthors($, link);
 
     seen.add(url);
     books.push({ title, authors, url });
@@ -249,182 +480,42 @@ export function extractBooks(html, baseUrl) {
   return books;
 }
 
-function splitAuthorText(value) {
-  return cleanText(value)
-    .split(',')
-    .map((author) => cleanText(author));
+function extractWishlistDomBookAuthors($, bookLink) {
+  return bookLink
+    .parent()
+    .find(WISHLIST_BOOK_AUTHOR_SELECTOR)
+    .toArray()
+    .flatMap((element) => cleanText($(element).text()).split(","))
+    .map((author) => cleanText(author))
+    .filter(Boolean)
+    .filter((author, index, authors) => authors.indexOf(author) === index);
 }
 
-export function extractBookPageDetails(html, baseUrl) {
-  const $ = load(html);
-
-  return {
-    description: extractBookPageDescription($),
-    image: extractBookPageImage($, baseUrl),
-    genre: extractBookPageGenre($),
-  };
+function uniqueBookAuthors(authors) {
+  return Array.isArray(authors)
+    ? authors
+        .map((author) => cleanText(author))
+        .filter(Boolean)
+        .filter((author, index, values) => values.indexOf(author) === index)
+    : [];
 }
 
-export function hasRecordedBookPageDescription(book) {
-  return typeof book?.description === 'string' && cleanText(book.description) !== '';
-}
-
-export function hasRecordedBookPageImage(book) {
-  return typeof book?.image === 'string' && cleanText(book.image) !== '';
-}
-
-export function hasRecordedBookPageGenre(book) {
-  return Boolean(book) && Object.prototype.hasOwnProperty.call(book, 'genre');
-}
-
-export function needsBookPageDetails(book) {
-  return (
-    !hasRecordedBookPageDescription(book)
-    || !hasRecordedBookPageImage(book)
-    || !hasRecordedBookPageGenre(book)
-  );
-}
-
-export async function enrichBooksWithBookPageDetails(
-  books,
-  {
-    fetchBookPage,
-    pageDelayMs = 0,
-    onFetchError,
-    sleep = (ms) => new Promise((resolveSleep) => {
-      setTimeout(resolveSleep, ms);
-    }),
-  } = {},
-) {
-  if (!Array.isArray(books)) {
-    throw new Error('Books must be an array');
+function getNumericSearchParam(rawUrl, name) {
+  if (typeof rawUrl !== "string") {
+    return null;
   }
 
-  if (typeof fetchBookPage !== 'function') {
-    throw new Error('Book page fetcher is required');
-  }
-
-  const enrichedBooks = [];
-
-  for (const book of books) {
-    if (!needsBookPageDetails(book) || !book?.url) {
-      enrichedBooks.push({ ...book });
-      continue;
-    }
-
-    let details = { description: null, image: null, genre: null };
-    try {
-      const page = await fetchBookPage({ url: book.url, book });
-      details = extractBookPageDetails(page?.html ?? '', page?.url ?? book.url);
-    } catch (error) {
-      if (typeof onFetchError === 'function') {
-        onFetchError({ book, url: book.url, error });
-      }
-    }
-
-    const enrichedBook = { ...book };
-    if (!hasRecordedBookPageDescription(enrichedBook) && details.description) {
-      enrichedBook.description = details.description;
-    }
-    if (!hasRecordedBookPageImage(enrichedBook) && details.image) {
-      enrichedBook.image = details.image;
-    }
-    if (!hasRecordedBookPageGenre(enrichedBook)) {
-      enrichedBook.genre = details.genre;
-    }
-
-    enrichedBooks.push(enrichedBook);
-
-    if (pageDelayMs > 0) {
-      await sleep(pageDelayMs);
-    }
-  }
-
-  return enrichedBooks;
-}
-
-function extractBookPageDescription($) {
-  const candidates = [
-    $(BOOK_PAGE_DESCRIPTION_SELECTOR).first().text(),
-    $('meta[property="og:description"]').first().attr('content'),
-    $('meta[name="description"]').first().attr('content'),
-    $('meta[itemprop="description"]').first().attr('content'),
-    ...$(DESCRIPTION_SELECTOR).toArray().map((element) => $(element).text()),
-  ];
-
-  return candidates
-    .map((value) => normalizeBookPageDescription(value))
-    .find(Boolean) ?? null;
-}
-
-function normalizeBookPageDescription(value) {
-  const text = cleanText(value)
-    .replace(/^Описание книги\s*/i, '')
-    .replace(/\s*(?:Читать полностью|Свернуть)\s*$/i, '')
-    .trim();
-
-  return text || null;
-}
-
-function extractBookPageImage($, baseUrl) {
-  for (const element of $(IMAGE_SELECTOR).toArray()) {
-    const image = $(element);
-    const rawUrl = image.attr('content')
-      ?? image.attr('src')
-      ?? image.attr('data-src')
-      ?? image.attr('data-original')
-      ?? image.attr('data-lazy-src');
-    const normalizedUrl = normalizeBookPageImageUrl(rawUrl, baseUrl);
-
-    if (normalizedUrl) {
-      return normalizedUrl;
-    }
-  }
-
-  return null;
-}
-
-function normalizeBookPageImageUrl(rawUrl, baseUrl) {
   let parsed;
   try {
-    parsed = new URL(rawUrl, baseUrl);
+    parsed = new URL(rawUrl, "https://www.livelib.ru");
   } catch {
     return null;
   }
 
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    return null;
-  }
+  const value = parsed.searchParams.get(name);
+  const number = Number.parseInt(value, 10);
 
-  return parsed.toString();
-}
-
-function extractBookPageGenre($) {
-  const text = $(GENRE_SELECTOR)
-    .toArray()
-    .map((element) => cleanText($(element).text()))
-    .filter(Boolean)
-    .join(' ');
-
-  return normalizeBookPageGenre(text);
-}
-
-function normalizeBookPageGenre(value) {
-  const text = cleanText(value).toLowerCase();
-
-  if (text.includes('научно-популярная литература')) {
-    return 'научпоп';
-  }
-
-  if (text.includes('фантастика')) {
-    return 'фантастика';
-  }
-
-  if (text.includes('фэнтези')) {
-    return 'фэнтези';
-  }
-
-  return null;
+  return String(number) === value ? number : null;
 }
 
 export function extractBooksFromPages(pages) {
@@ -461,9 +552,7 @@ export function extractBookUrlsFromPages(pages) {
 
 export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
   const existingBooksByUrl = new Map(
-    existingBooks
-      .filter((book) => book?.url)
-      .map((book) => [book.url, book]),
+    existingBooks.filter((book) => book?.url).map((book) => [book.url, book])
   );
   const livelibUrls = new Set();
   const matched = [];
@@ -475,7 +564,7 @@ export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
 
     matched.push({
       livelibBook,
-      existingBook,
+      existingBook
     });
 
     if (!existingBook) {
@@ -483,34 +572,41 @@ export function matchBooksByLiveLibUrl(livelibBooks, existingBooks = []) {
     }
   }
 
-  const removedBooks = existingBooks.filter((book) => (
-    book?.url && !livelibUrls.has(book.url)
-  ));
+  const removedBooks = existingBooks.filter(
+    (book) => book?.url && !livelibUrls.has(book.url)
+  );
 
   return {
     matched,
     newBooks,
-    removedBooks,
+    removedBooks
   };
 }
 
 export function mergeExistingLiveLibBooks(livelibBooks, existingBooks = []) {
-  return matchBooksByLiveLibUrl(livelibBooks, existingBooks).matched.map((match) => (
-    match.existingBook ? bookWithLiveLibSource(
-      normalizeBookAudiobookUrls(match.existingBook),
-      match.livelibBook,
-    ) : {
-      ...match.livelibBook,
-      yandex_books_urls: [],
-      audiobooks_urls: [],
-    }
-  ));
+  return matchBooksByLiveLibUrl(livelibBooks, existingBooks).matched.map(
+    (match) =>
+      match.existingBook
+        ? bookWithLiveLibSource(
+            normalizeBookAudiobookUrls(match.existingBook),
+            match.livelibBook
+          )
+        : {
+            ...match.livelibBook,
+            yandex_books_urls: [],
+            audiobooks_urls: []
+          }
+  );
 }
 
 function bookWithLiveLibSource(existingBook, livelibBook) {
   const book = { ...existingBook };
+  if (!Array.isArray(book.authors) || book.authors.length === 0) {
+    book.authors = uniqueBookAuthors(livelibBook.authors);
+  }
+
   Object.defineProperty(book, LIVELIB_SOURCE_BOOK, {
-    value: livelibBook,
+    value: livelibBook
   });
 
   return book;

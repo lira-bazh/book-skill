@@ -7,7 +7,10 @@ export function extractLabeledPageTextValue(html, labels, { stopLabels = labels 
     return null;
   }
 
-  const normalizedLabels = labels.map((label) => cleanText(label)).filter(Boolean);
+  const normalizedLabels = labels
+    .map((label) => cleanText(label))
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
   if (normalizedLabels.length === 0) {
     return null;
   }

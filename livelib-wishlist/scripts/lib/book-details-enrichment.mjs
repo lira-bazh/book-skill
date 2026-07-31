@@ -24,7 +24,7 @@ import {
   hasRecordedBookPageGenre,
   hasRecordedBookPageImage,
   needsBookPageDetails,
-} from './livelib.mjs';
+} from './livelib-book-page.mjs';
 import { extractRutrackerAudiobookTitle } from './rutracker-books.mjs';
 
 const RUTRACKER_TOPIC_PATH = '/forum/viewtopic.php';

@@ -9,6 +9,7 @@ import {
   normalizeBookUrl,
 } from './livelib.mjs';
 import { buildLitresSearchUrl } from './litres-books.mjs';
+import { buildRutrackerSearchUrl } from './rutracker-books.mjs';
 import { buildYandexBooksSearchUrl } from './yandex-books.mjs';
 import { isAudiobookUrl, isRutrackerUrl } from './book-url-fields.mjs';
 import { cleanText } from './text-match.mjs';
@@ -17,9 +18,13 @@ export const DEFAULT_MAX_PAGES = 50;
 export const DEFAULT_PAGE_DELAY_MS = 2000;
 export const DEFAULT_NAVIGATION_TIMEOUT_MS = 120000;
 export const DEFAULT_NAVIGATION_ATTEMPTS = 3;
+export const DEFAULT_LIVELIB_NAVIGATION_ATTEMPTS = 5;
+export const DEFAULT_LIVELIB_NAVIGATION_RETRY_DELAY_MS = 5000;
 export const DEFAULT_LITRES_RESULTS_WAIT_TIMEOUT_MS = 5000;
 export const DEFAULT_LIVELIB_ACCESS_CHALLENGE_WAIT_TIMEOUT_MS = 300000;
 export const DEFAULT_LIVELIB_CONTENT_WAIT_TIMEOUT_MS = 10000;
+export const DEFAULT_RUTRACKER_SECURITY_VERIFICATION_WAIT_TIMEOUT_MS = 300000;
+export const DEFAULT_RUTRACKER_CONTENT_WAIT_TIMEOUT_MS = 10000;
 
 const SKILL_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const DEFAULT_PROFILE_DIR = resolve(SKILL_DIR, '.browser-profile');
@@ -37,9 +42,17 @@ function sleep(ms) {
 function isRetriableNavigationError(error) {
   const message = error?.message ?? '';
   return message.includes('net::ERR_NETWORK_CHANGED')
+    || message.includes('net::ERR_ADDRESS_UNREACHABLE')
     || message.includes('net::ERR_TIMED_OUT')
     || message.includes('net::ERR_HTTP_RESPONSE_CODE_FAILURE')
     || message.includes('Timeout');
+}
+
+function isClosedBrowserError(error) {
+  const message = error?.message ?? '';
+  return message.includes('Target page, context or browser has been closed')
+    || message.includes('Browser has been closed')
+    || message.includes('Target closed');
 }
 
 function responseStatus(response) {
@@ -101,8 +114,15 @@ async function gotoWithRetry(page, url, {
 }
 
 async function gotoRutrackerWithRetry(page, url) {
+  const response = await gotoWithRetry(page, url);
+  await waitForRutrackerSecurityVerification(page);
+  return response;
+}
+
+async function gotoLiveLibWithRetry(page, url) {
   return gotoWithRetry(page, url, {
-    shouldRetryResponse: isUnsuccessfulResponse,
+    attempts: DEFAULT_LIVELIB_NAVIGATION_ATTEMPTS,
+    retryDelayMs: DEFAULT_LIVELIB_NAVIGATION_RETRY_DELAY_MS,
   });
 }
 
@@ -118,6 +138,7 @@ async function waitForLiveLibAccessChallenge(page, {
           const parsed = new URL(window.location.href, baseUrl);
           const expectedPath = `/reader/${username}/wish`;
           const normalizedPath = parsed.pathname.replace(/\/$/, '');
+          const userWishlistPathRe = /^\/users\/[0-9]+\/books\/want$/;
           const listViewPagePathRe = new RegExp(
             `^${expectedPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/listview/[^/]+/~([0-9]+)$`,
           );
@@ -130,6 +151,10 @@ async function waitForLiveLibAccessChallenge(page, {
           }
 
           if (normalizedPath === expectedPath && parsed.search === '') {
+            return true;
+          }
+
+          if (userWishlistPathRe.test(normalizedPath) && parsed.search === '') {
             return true;
           }
 
@@ -165,7 +190,7 @@ async function waitForLiveLibAccessChallenge(page, {
   }
 
   if (!isWishlistContentUrl(page.url(), wishlistUrl.username, wishlistUrl.url)) {
-    await gotoWithRetry(page, targetUrl);
+    await gotoLiveLibWithRetry(page, targetUrl);
   }
 }
 
@@ -175,6 +200,32 @@ async function waitForPageNetworkIdle(page, timeout = DEFAULT_LIVELIB_CONTENT_WA
   }
 
   await page.waitForLoadState('networkidle', { timeout }).catch(() => {});
+}
+
+async function waitForRutrackerSecurityVerification(page, {
+  timeoutMs = DEFAULT_RUTRACKER_SECURITY_VERIFICATION_WAIT_TIMEOUT_MS,
+} = {}) {
+  await waitForPageNetworkIdle(page, DEFAULT_RUTRACKER_CONTENT_WAIT_TIMEOUT_MS);
+
+  if (typeof page.waitForFunction !== 'function') {
+    return;
+  }
+
+  await page.waitForFunction(() => {
+    const text = document.body?.innerText ?? document.body?.textContent ?? '';
+    const normalizedText = text.replace(/\s+/g, ' ').trim().toLowerCase();
+    const isSecurityVerificationPage = (
+      normalizedText.includes('performing security verification')
+      || normalizedText.includes('security service to protect against malicious bots')
+      || (normalizedText.includes('verifying') && normalizedText.includes('cloudflare'))
+    );
+
+    return document.readyState === 'complete' && !isSecurityVerificationPage;
+  }, undefined, {
+    timeout: timeoutMs,
+  });
+
+  await waitForPageNetworkIdle(page, DEFAULT_RUTRACKER_CONTENT_WAIT_TIMEOUT_MS);
 }
 
 async function scrollPageToBottom(page) {
@@ -271,6 +322,18 @@ async function fetchLitresSearchPageWithPage(page, { query, searchUrl }) {
   };
 }
 
+async function fetchRutrackerSearchPageWithPage(page, { query, searchUrl }) {
+  const normalizedQuery = cleanText(query);
+  const targetUrl = searchUrl ?? buildRutrackerSearchUrl(normalizedQuery);
+
+  await gotoRutrackerWithRetry(page, targetUrl);
+  return {
+    query: normalizedQuery,
+    url: page.url(),
+    html: await page.content(),
+  };
+}
+
 async function fetchAudiobookPageWithPage(page, { url }) {
   if (!isAudiobookUrl(url) && !isRutrackerUrl(url)) {
     throw new Error('Audiobook page URL must be an audiobook or RuTracker topic URL');
@@ -293,11 +356,21 @@ async function fetchBookPageWithPage(page, { url }) {
     throw new Error('Book page URL must be a LiveLib book or work URL');
   }
 
-  await gotoWithRetry(page, normalizedUrl);
+  await gotoLiveLibWithRetry(page, normalizedUrl);
+  await expandLiveLibBookDescription(page);
   return {
     url: page.url(),
     html: await page.content(),
   };
+}
+
+async function expandLiveLibBookDescription(page) {
+  const button = page.locator('button[class*="ShortInfo_ShortInfoTruncateButton"]').first();
+  if (await button.count().catch(() => 0) === 0) {
+    return;
+  }
+
+  await button.click({ timeout: 5000 }).catch(() => {});
 }
 
 async function waitForLitresSearchResults(page) {
@@ -336,6 +409,18 @@ async function isLitresAuthenticated(page) {
   return Boolean(await page.evaluate(() => {
     const loginTabText = document.querySelector('#tab-login')?.textContent ?? '';
     return !loginTabText.includes('Войти');
+  }).catch(() => false));
+}
+
+async function isRutrackerAuthenticated(page) {
+  if (typeof page.evaluate !== 'function') {
+    return false;
+  }
+
+  return Boolean(await page.evaluate(() => {
+    const topMenuText = document.querySelector('.topmenu')?.textContent ?? '';
+    const topMenuWords = topMenuText.split(/\s+/u).filter(Boolean);
+    return !topMenuWords.includes('Регистрация') && !topMenuWords.includes('Вход');
   }).catch(() => false));
 }
 
@@ -378,7 +463,7 @@ async function fetchWishlistPagesWithPage(page, {
 
   while (pending.length > 0 && fetchedPages.length < maxPages) {
     const url = pending.shift();
-    await gotoWithRetry(page, url);
+    await gotoLiveLibWithRetry(page, url);
 
     let finalUrl = page.url();
     if (isLiveLibRateLimitCaptchaUrl(finalUrl)) {
@@ -423,31 +508,114 @@ export async function withBrowserSession({
   }
 
   const playwrightApi = playwright ?? await import('playwright');
-  const context = await playwrightApi.chromium.launchPersistentContext(resolveProfileDir(profileDir), {
-    headless: false,
-  });
+  const resolvedProfileDir = resolveProfileDir(profileDir);
+  let context = null;
+  let page = null;
+  let session = null;
+
+  const closeContext = async () => {
+    await context?.close().catch(() => {});
+    context = null;
+    page = null;
+    if (session) {
+      session.page = null;
+    }
+  };
+
+  const openContext = async () => {
+    context = await playwrightApi.chromium.launchPersistentContext(resolvedProfileDir, {
+      headless: false,
+    });
+    page = context.pages().find((contextPage) => !contextPage.isClosed()) ?? await context.newPage();
+    if (session) {
+      session.page = page;
+    }
+    return page;
+  };
+
+  const isContextConnected = () => {
+    const browser = context?.browser?.();
+    return !browser || typeof browser.isConnected !== 'function' || browser.isConnected();
+  };
+
+  const getPage = async () => {
+    if (page && !page.isClosed() && isContextConnected()) {
+      return page;
+    }
+
+    if (context && isContextConnected()) {
+      try {
+        page = context.pages().find((contextPage) => !contextPage.isClosed()) ?? await context.newPage();
+        if (session) {
+          session.page = page;
+        }
+        return page;
+      } catch {
+        await closeContext();
+      }
+    }
+
+    await closeContext();
+    return openContext();
+  };
+
+  const runWithActivePage = async (action) => {
+    try {
+      return await action(await getPage());
+    } catch (error) {
+      if (!isClosedBrowserError(error)) {
+        throw error;
+      }
+
+      await closeContext();
+      return action(await getPage());
+    }
+  };
 
   try {
-    const page = context.pages()[0] ?? await context.newPage();
-    return await callback({
+    page = await openContext();
+    session = {
       page,
-      fetchWishlistPages: (options) => fetchWishlistPagesWithPage(page, options),
-      fetchYandexBooksSearchPage: (options) => fetchYandexBooksSearchPageWithPage(page, options),
-      fetchLitresSearchPage: (options) => fetchLitresSearchPageWithPage(page, options),
-      fetchAudiobookPage: (options) => fetchAudiobookPageWithPage(page, options),
-      fetchBookPage: (options) => fetchBookPageWithPage(page, options),
-      openLitresHome: async () => {
-        await gotoWithRetry(page, 'https://www.litres.ru/');
-        const isAuthenticated = await isLitresAuthenticated(page);
+      fetchWishlistPages: async (options) => runWithActivePage((activePage) => (
+        fetchWishlistPagesWithPage(activePage, options)
+      )),
+      fetchYandexBooksSearchPage: async (options) => runWithActivePage((activePage) => (
+        fetchYandexBooksSearchPageWithPage(activePage, options)
+      )),
+      fetchLitresSearchPage: async (options) => runWithActivePage((activePage) => (
+        fetchLitresSearchPageWithPage(activePage, options)
+      )),
+      fetchRutrackerSearchPage: async (options) => runWithActivePage((activePage) => (
+        fetchRutrackerSearchPageWithPage(activePage, options)
+      )),
+      fetchAudiobookPage: async (options) => runWithActivePage((activePage) => (
+        fetchAudiobookPageWithPage(activePage, options)
+      )),
+      fetchBookPage: async (options) => runWithActivePage((activePage) => (
+        fetchBookPageWithPage(activePage, options)
+      )),
+      openLitresHome: async () => runWithActivePage(async (activePage) => {
+        await gotoWithRetry(activePage, 'https://www.litres.ru/');
+        const isAuthenticated = await isLitresAuthenticated(activePage);
         return {
-          url: page.url(),
+          url: activePage.url(),
           isAuthenticated,
-          html: await page.content(),
+          html: await activePage.content(),
         };
-      },
-    });
+      }),
+      openRutrackerHome: async () => runWithActivePage(async (activePage) => {
+        await gotoRutrackerWithRetry(activePage, 'https://rutracker.org/forum/index.php');
+        const isAuthenticated = await isRutrackerAuthenticated(activePage);
+        return {
+          url: activePage.url(),
+          isAuthenticated,
+          html: await activePage.content(),
+        };
+      }),
+    };
+    return await callback(session);
   } finally {
-    await context.close();
+    await closeContext();
   }
 }
 

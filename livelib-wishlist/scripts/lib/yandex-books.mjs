@@ -14,13 +14,15 @@ import { LIVELIB_SOURCE_BOOK } from './livelib.mjs';
 
 const YANDEX_BOOKS_ITEM_PATH_RE = /^\/(?:books|audiobooks)\/[^/]+$/;
 const YANDEX_BOOKS_ET_AL_RE = /(?:^|[\s,;])(?:и\s+)?др\.?$/iu;
-const YANDEX_BOOKS_NARRATOR_LABEL = 'Рассказчик';
+const YANDEX_BOOKS_NARRATOR_LABELS = ['Рассказчик', 'Рассказчики'];
 const YANDEX_BOOKS_DURATION_LABEL = 'Длительность';
 const YANDEX_BOOKS_DURATION_SECONDS_RE = /(?:"|\\")duration(?:"|\\")\s*:\s*(\d+)/u;
 const YANDEX_BOOKS_TITLE_MATCH_STOP_RE = /[.:?]/u;
 
 export function extractYandexBooksAudiobookNarrator(html) {
-  return extractLabeledPageTextValue(html, [YANDEX_BOOKS_NARRATOR_LABEL]);
+  return extractLabeledPageTextValue(html, YANDEX_BOOKS_NARRATOR_LABELS, {
+    stopLabels: [...YANDEX_BOOKS_NARRATOR_LABELS, YANDEX_BOOKS_DURATION_LABEL],
+  });
 }
 
 export function extractYandexBooksAudiobookDurationMinutes(html) {
